@@ -81,17 +81,17 @@ pub fn detect() -> Detection {
             },
         }
     } else if let Ok(display) = std::env::var("DISPLAY") {
-        if !display.is_empty() {
-            Detection {
-                backend: SurfaceBackend::X11NoInput,
-                detail: format!("X11 session on {display}"),
-                x11_display: Some(display),
-            }
-        } else {
+        if display.is_empty() {
             Detection {
                 backend: SurfaceBackend::None,
                 detail: "no display server detected".into(),
                 x11_display: None,
+            }
+        } else {
+            Detection {
+                backend: SurfaceBackend::X11NoInput,
+                detail: format!("X11 session on {display}"),
+                x11_display: Some(display),
             }
         }
     } else {

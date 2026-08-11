@@ -10,11 +10,11 @@ use crate::config::DaemonConfig;
 use crate::device::{DeviceError, KeyboardDevice};
 use crate::rate_limit::TokenBucket;
 use ferrokey_protocol::{peer_identity, Decoder, ErrorCode, Message, PROTOCOL_VERSION};
-use std::os::fd::AsRawFd;
+use std::io::Write as _;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Why a connection ended.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -70,7 +70,7 @@ pub struct Server {
 }
 
 /// A connection plus its state, split out for testability.
-struct ConnectionState {
+pub(crate) struct ConnectionState {
     stream: UnixStream,
     decoder: Decoder,
     rate: TokenBucket,
@@ -95,7 +95,6 @@ impl Server {
             source,
         })?;
         // Restrict the socket to the daemon's operator group.
-        use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(config.socket_mode))
             .map_err(|e| ServerError::Permissions(e.to_string()))?;
         log::info!("listening on {}", path.display());
@@ -157,7 +156,7 @@ impl Server {
                             let result = serve_connection(stream, &config);
                             live.fetch_sub(1, Ordering::SeqCst);
                             match &result {
-                                Ok(_) => log::info!("connection closed cleanly"),
+                                Ok(()) => log::info!("connection closed cleanly"),
                                 Err(e) => log::info!("connection ended: {e}"),
                             }
                         });
@@ -196,7 +195,7 @@ fn authorize(
 pub fn serve_connection(stream: UnixStream, config: &DaemonConfig) -> Result<(), ConnectionError> {
     let peer = peer_identity(&stream).map_err(|e| ConnectionError::Io(e.to_string()))?;
     authorize(&peer, config)?;
-    log::info!("peer {} authenticated", peer);
+    log::info!("peer {peer} authenticated");
 
     let mut state = ConnectionState {
         stream,
@@ -251,7 +250,6 @@ fn read_messages(state: &mut ConnectionState) -> Result<Vec<Message>, Connection
 fn send(state: &mut ConnectionState, msg: &Message) -> Result<(), ConnectionError> {
     let frame = ferrokey_protocol::codec::encode(msg)
         .map_err(|e| ConnectionError::Protocol(e.to_string()))?;
-    use std::io::Write;
     state.stream.write_all(&frame)?;
     Ok(())
 }
@@ -260,7 +258,8 @@ fn send(state: &mut ConnectionState, msg: &Message) -> Result<(), ConnectionErro
 /// Returns `Ok(true)` if any message was processed, `Ok(false)` if nothing
 /// was pending, and `Err` on EOF or protocol failure. Used by tests to drive
 /// the state machine deterministically.
-pub fn pump(state: &mut ConnectionState) -> Result<bool, ConnectionError> {
+#[cfg(test)]
+pub(crate) fn pump(state: &mut ConnectionState) -> Result<bool, ConnectionError> {
     let mut buf = [0u8; 8192];
     let n = match std::io::Read::read(&mut state.stream, &mut buf) {
         Ok(0) => return Err(ConnectionError::Closed),
@@ -417,8 +416,7 @@ fn handle_message(state: &mut ConnectionState, message: Message) -> Result<(), C
 fn map_device_error(e: &DeviceError) -> ErrorCode {
     match e {
         DeviceError::UnknownKey(_) => ErrorCode::UnknownKey,
-        DeviceError::KeyUpWithoutDown(_) => ErrorCode::InvalidKeyState,
-        DeviceError::Rollover(_) => ErrorCode::InvalidKeyState,
+        DeviceError::KeyUpWithoutDown(_) | DeviceError::Rollover(_) => ErrorCode::InvalidKeyState,
         DeviceError::Create(_) => ErrorCode::DeviceError,
         DeviceError::Io(_) => ErrorCode::Internal,
     }
@@ -429,19 +427,11 @@ mod tests {
     use super::*;
     use crate::device::MockKeyboard;
     use ferrokey_protocol::codec::encode;
-    use std::io::{Read as _, Write as _};
-
-    fn test_config() -> DaemonConfig {
-        let mut config = DaemonConfig::default();
-        config.allowed_uids = vec![1]; // unused in these tests (direct state)
-        config.socket_path = "/tmp/ferrokeyd-test.sock".into();
-        config
-    }
+    use std::io::Read as _;
 
     struct Harness {
         client: UnixStream,
         state: ConnectionState,
-        device: MockKeyboard,
     }
 
     impl Harness {
@@ -449,7 +439,6 @@ mod tests {
             let (client, server) = UnixStream::pair().unwrap();
             client.set_nonblocking(true).unwrap();
             server.set_nonblocking(true).unwrap();
-            let device = MockKeyboard::new();
             let state = ConnectionState {
                 stream: server,
                 decoder: Decoder::new(),
@@ -458,11 +447,7 @@ mod tests {
                 hello_received: false,
                 keyboard_created: false,
             };
-            Harness {
-                client,
-                state,
-                device,
-            }
+            Harness { client, state }
         }
 
         fn send(&mut self, msg: &Message) {
@@ -638,9 +623,9 @@ mod tests {
         let mut h = Harness::new();
         h.handshake();
         h.drain_replies();
-        h.send(&Message::Ping(0xDEADBEEF));
+        h.send(&Message::Ping(0xDEAD_BEEF));
         h.pump().unwrap();
-        assert_eq!(h.drain_replies(), vec![Message::Pong(0xDEADBEEF)]);
+        assert_eq!(h.drain_replies(), vec![Message::Pong(0xDEAD_BEEF)]);
     }
 
     #[test]

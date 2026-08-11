@@ -6,9 +6,7 @@
 //! produce are reported as errors — Ferrokey **never silently substitutes
 //! clipboard paste** for keyboard injection.
 
-use ferrokey_core::{
-    KeyAction, KeyboardDriver, ModifierKind, ModifierSet, PhysicalKey, TextError, VirtualKey,
-};
+use ferrokey_core::{KeyAction, KeyboardDriver, ModifierSet, PhysicalKey, TextError, VirtualKey};
 use std::time::Instant;
 
 /// Type `text` through the driver using the active layout.
@@ -54,11 +52,7 @@ where
     Ok(())
 }
 
-/// The modifiers engaged for a resolved char, in canonical order.
-pub fn modifier_order(set: ModifierSet) -> Vec<ModifierKind> {
-    set.iter().collect()
-}
-
+/// Type `text` through the driver using the active layout.
 #[cfg(test)]
 mod tests {
     use super::*;

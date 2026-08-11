@@ -98,7 +98,7 @@ impl X11Surface {
         let aux = CreateWindowAux::new()
             .background_pixel(screen.black_pixel)
             .event_mask(event_mask)
-            .override_redirect(if options.override_redirect { 1 } else { 0 });
+            .override_redirect(u32::from(options.override_redirect));
         conn.create_window(
             screen.root_depth,
             window,
@@ -119,7 +119,7 @@ impl X11Surface {
         let gc = conn
             .generate_id()
             .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
-        conn.create_gc(gc, window, &Default::default())
+        conn.create_gc(gc, window, &x11rb::protocol::xproto::CreateGCAux::default())
             .map_err(|e| SurfaceError::Protocol(e.to_string()))?
             .check()
             .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
@@ -311,8 +311,8 @@ impl Surface for X11Surface {
         let _ = self.conn.configure_window(
             self.window,
             &x11rb::protocol::xproto::ConfigureWindowAux::new()
-                .width(width.min(u16::MAX as u32))
-                .height(height.min(u16::MAX as u32)),
+                .width(width.min(u32::from(u16::MAX)))
+                .height(height.min(u32::from(u16::MAX))),
         );
         self.conn
             .flush()
@@ -408,7 +408,7 @@ impl Surface for X11Surface {
                 nix::poll::PollFlags::POLLIN,
             )];
             let timeout_ms = timeout
-                .map(|t| t.as_millis().min(u16::MAX as u128) as u16)
+                .map(|t| t.as_millis().min(u128::from(u16::MAX)) as u16)
                 .unwrap_or(500);
             nix::poll::poll(&mut fds, nix::poll::PollTimeout::from(timeout_ms))
                 .map_err(|e| SurfaceError::Io(e.to_string()))?

@@ -549,7 +549,7 @@ mod tests {
         let now = t0();
         s.press(PhysicalKey::LeftShift, now).unwrap();
         // Hold much longer than tap_timeout.
-        s.release(PhysicalKey::LeftShift, now + Duration::from_millis(1000))
+        s.release(PhysicalKey::LeftShift, now + Duration::from_secs(1))
             .unwrap();
         assert!(s.latched().is_empty());
     }
@@ -576,7 +576,7 @@ mod tests {
         assert_eq!(s.active_layer(), Layer::AltGr);
         assert!(s.effective_modifiers().contains(ModifierSet::ALTGR));
         // Release after tap_timeout ⇒ not a tap ⇒ no latch.
-        s.release(PhysicalKey::RightAlt, now + Duration::from_millis(1000))
+        s.release(PhysicalKey::RightAlt, now + Duration::from_secs(1))
             .unwrap();
         assert_eq!(s.active_layer(), Layer::Base);
         assert!(s.latched().is_empty());

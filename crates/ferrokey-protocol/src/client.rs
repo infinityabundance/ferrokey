@@ -63,19 +63,14 @@ impl Client {
     /// In non-blocking mode this returns `Ok(vec![])` when no data is ready.
     pub fn read_available(&mut self) -> Result<Vec<Message>, ProtocolError> {
         let mut buf = [0u8; 4096];
-        loop {
-            match self.stream.read(&mut buf) {
-                Ok(0) => {
-                    // EOF: the daemon closed the connection.
-                    return Err(ProtocolError::Io(io::Error::new(
-                        io::ErrorKind::ConnectionReset,
-                        "daemon closed the connection",
-                    )));
-                }
-                Ok(n) => return self.decoder.push(&buf[..n]).map_err(ProtocolError::Codec),
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(Vec::new()),
-                Err(e) => return Err(e.into()),
-            }
+        match self.stream.read(&mut buf) {
+            Ok(0) => Err(ProtocolError::Io(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "daemon closed the connection",
+            ))),
+            Ok(n) => self.decoder.push(&buf[..n]).map_err(ProtocolError::Codec),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(Vec::new()),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -98,7 +93,7 @@ impl Client {
                     Message::Error(code, _) => {
                         return Err(ProtocolError::Server(Message::Error(code, String::new())))
                     }
-                    _ => continue,
+                    _ => {}
                 }
             }
         }

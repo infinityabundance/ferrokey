@@ -12,7 +12,7 @@ use std::io;
 /// One `EV_KEY` event. The caller batches and lets
 /// [`VirtualDevice::emit`] add the trailing `SYN_REPORT`.
 pub fn key_event(code: KeyCode, value: i32) -> InputEvent {
-    InputEvent::new(EventType::KEY.0 as u16, code.code() as u16, value)
+    InputEvent::new(EventType::KEY.0, code.code(), value)
 }
 
 /// A press event (`EV_KEY` value=1).
@@ -61,7 +61,7 @@ mod tests {
     fn event_construction() {
         let down = key_down_event(KeyCode::KEY_A);
         assert_eq!(down.event_type(), EventType::KEY);
-        assert_eq!(down.code(), u16::from(KeyCode::KEY_A.code()));
+        assert_eq!(down.code(), KeyCode::KEY_A.code());
         assert_eq!(down.value(), 1);
 
         let up = key_up_event(KeyCode::KEY_A);

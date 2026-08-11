@@ -71,7 +71,7 @@ impl WindowAdapter for FerrokeyWindowAdapter {
         self.surface
             .borrow_mut()
             .set_visible(visible)
-            .map_err(|e| PlatformError::Other(e.to_string().into()))?;
+            .map_err(|e| PlatformError::Other(e.to_string()))?;
         if visible {
             self.redraw.set(true);
         }
@@ -133,7 +133,7 @@ impl FerrokeyPlatform {
         self.surface
             .borrow_mut()
             .set_size(width, height)
-            .map_err(|e| PlatformError::Other(e.to_string().into()))?;
+            .map_err(|e| PlatformError::Other(e.to_string()))?;
         self.window().dispatch_event(WindowEvent::Resized {
             size: LogicalSize::new(width as f32 / scale, height as f32 / scale),
         });
@@ -156,7 +156,7 @@ impl FerrokeyPlatform {
             .surface
             .borrow_mut()
             .poll_events(timeout)
-            .map_err(|e| PlatformError::Other(e.to_string().into()))?;
+            .map_err(|e| PlatformError::Other(e.to_string()))?;
         for event in events {
             self.handle_surface_event(event);
         }
@@ -190,7 +190,7 @@ impl FerrokeyPlatform {
         self.surface
             .borrow_mut()
             .present(&bytes, width, height, width)
-            .map_err(|e| PlatformError::Other(e.to_string().into()))?;
+            .map_err(|e| PlatformError::Other(e.to_string()))?;
         Ok(())
     }
 
@@ -300,7 +300,7 @@ mod tests {
     fn null_platform_has_expected_backend() {
         let platform = null_platform(320, 200);
         assert_eq!(platform.backend(), crate::SurfaceBackend::None);
-        assert_eq!(platform.scale(), 1.0);
+        assert!((platform.scale() - 1.0).abs() < f32::EPSILON);
         // Events on a null surface are always empty.
         platform.process_events(Some(Duration::ZERO)).unwrap();
     }

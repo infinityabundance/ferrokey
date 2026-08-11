@@ -78,7 +78,7 @@ impl DaemonConfig {
 
     /// Parse from YAML text.
     pub fn parse(yaml: &str) -> Result<Self, ConfigError> {
-        let mut config: DaemonConfig =
+        let config: DaemonConfig =
             serde_yaml::from_str(yaml).map_err(|e| ConfigError::Parse(e.to_string()))?;
         config.validate()?;
         Ok(config)
@@ -145,13 +145,7 @@ mod tests {
 
     #[test]
     fn valid_config_parses() {
-        let yaml = r#"
-socket_path: /tmp/ferrokeyd.sock
-allowed_uids: [1000]
-rate:
-  burst: 300
-  per_second: 250
-"#;
+        let yaml = "socket_path: /tmp/ferrokeyd.sock\nallowed_uids: [1000]\nrate:\n  burst: 300\n  per_second: 250\n";
         let cfg = DaemonConfig::parse(yaml).unwrap();
         assert_eq!(cfg.allowed_uids, vec![1000]);
         assert_eq!(cfg.rate.burst, 300);

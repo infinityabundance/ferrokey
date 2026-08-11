@@ -29,7 +29,7 @@ slint::include_modules!();
 
 fn main() -> anyhow::Result<()> {
     let config = load_ui_config()?;
-    run(config)
+    run(&config)
 }
 
 fn load_ui_config() -> anyhow::Result<UiConfig> {
@@ -47,9 +47,10 @@ fn load_ui_config() -> anyhow::Result<UiConfig> {
             "--layout" => {
                 i += 1;
                 let layout = args.get(i).context("--layout requires an id")?;
-                let mut cfg = UiConfig::default();
-                cfg.layout = layout.clone();
-                return Ok(cfg);
+                return Ok(UiConfig {
+                    layout: layout.clone(),
+                    ..Default::default()
+                });
             }
             "--help" | "-h" => {
                 println!("ferrokey — on-screen keyboard with focus preservation\n\nUSAGE:\n  ferrokey [--config <path>] [--layout <id>]");
@@ -70,7 +71,7 @@ fn load_ui_config() -> anyhow::Result<UiConfig> {
     Ok(UiConfig::default())
 }
 
-fn run(config: UiConfig) -> anyhow::Result<()> {
+fn run(config: &UiConfig) -> anyhow::Result<()> {
     // ── Surface detection (capability-driven, never compositor-name based) ──
     let detection = detect::detect();
     log::info!(
@@ -86,9 +87,13 @@ fn run(config: UiConfig) -> anyhow::Result<()> {
             Box::new(surface)
         }
         SurfaceBackend::X11NoInput => {
-            let mut options = ferrokey_surface::x11::X11Options::default();
-            options.display = detection.x11_display.clone().or(config.x11_display.clone());
-            options.override_redirect = false;
+            let options = ferrokey_surface::x11::X11Options {
+                display: detection
+                    .x11_display
+                    .clone()
+                    .or_else(|| config.x11_display.clone()),
+                ..Default::default()
+            };
             let surface = ferrokey_surface::x11::X11Surface::create(options)
                 .context("x11 surface create failed")?;
             Box::new(surface)

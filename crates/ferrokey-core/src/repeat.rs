@@ -77,7 +77,7 @@ impl RepeatEngine {
         } else {
             // Repeat disabled: keep a marker far in the future so `held` is
             // accurate but no event can fire.
-            now + Duration::from_secs(24 * 60 * 60)
+            now + Duration::from_hours(24)
         };
         self.held.insert(
             key,
@@ -101,7 +101,7 @@ impl RepeatEngine {
         }
         let mut due = Vec::new();
         let cadence = self.settings.cadence;
-        for (&key, state) in self.held.iter_mut() {
+        for (&key, state) in &mut self.held {
             if now >= state.next_repeat_at {
                 due.push(key);
                 state.next_repeat_at = now + cadence;
@@ -168,7 +168,7 @@ mod tests {
         eng.key_down(PhysicalKey::Backspace, now, true);
         eng.tick(now + Duration::from_millis(500));
         eng.key_up(PhysicalKey::Backspace);
-        assert!(eng.tick(now + Duration::from_millis(1000)).is_empty());
+        assert!(eng.tick(now + Duration::from_secs(1)).is_empty());
         assert!(eng.held_keys().next().is_none());
     }
 
@@ -190,7 +190,7 @@ mod tests {
         let mut eng = RepeatEngine::new(settings);
         let now = t0();
         eng.key_down(PhysicalKey::A, now, true);
-        assert!(eng.tick(now + Duration::from_secs(60)).is_empty());
+        assert!(eng.tick(now + Duration::from_mins(1)).is_empty());
     }
 
     #[test]

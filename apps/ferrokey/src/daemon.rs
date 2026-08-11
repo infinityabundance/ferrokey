@@ -62,10 +62,6 @@ impl DaemonLink {
         self.state.clone()
     }
 
-    pub fn last_error(&self) -> Option<&str> {
-        self.last_error.as_deref()
-    }
-
     /// Try to (re)connect if we are due.
     pub fn poll_connect(&mut self) {
         if self.client.is_some() || Instant::now() < self.next_attempt {
@@ -79,7 +75,7 @@ impl DaemonLink {
                         version: PROTOCOL_VERSION,
                         client_name: format!("ferrokey-ui/{}", env!("CARGO_PKG_VERSION")),
                     })
-                    .and_then(|_| client.send(&Message::CreateKeyboard));
+                    .and_then(|()| client.send(&Message::CreateKeyboard));
                 match handshake {
                     Ok(()) => {
                         client.set_nonblocking(true).ok();

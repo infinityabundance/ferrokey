@@ -120,10 +120,7 @@ impl Decoder {
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<Message>, CodecError> {
         self.buf.extend_from_slice(bytes);
         let mut messages = Vec::new();
-        loop {
-            let Some(frame_len) = self.frame_len()? else {
-                break; // need more bytes for a complete frame
-            };
+        while let Some(frame_len) = self.frame_len()? {
             let end = HEADER_LEN + frame_len;
             let payload = self.buf[HEADER_LEN..end].to_vec();
             self.buf.drain(..end);
@@ -296,7 +293,7 @@ mod tests {
         round_trip(&Message::KeyDown(30));
         round_trip(&Message::KeyUp(42));
         round_trip(&Message::ReleaseAll);
-        round_trip(&Message::Ping(0xDEADBEEF));
+        round_trip(&Message::Ping(0xDEAD_BEEF));
         round_trip(&Message::Pong(7));
         round_trip(&Message::Ok);
         round_trip(&Message::Error(ErrorCode::Unauthorized, "nope".into()));

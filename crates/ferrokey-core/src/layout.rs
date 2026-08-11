@@ -193,7 +193,7 @@ impl KeyDefinition {
             (true, true) => self
                 .shift_altgr
                 .as_ref()
-                .unwrap_or(&self.altgr.as_ref().unwrap_or(&self.shifted)),
+                .unwrap_or(self.altgr.as_ref().unwrap_or(&self.shifted)),
             (true, false) => self.altgr.as_ref().unwrap_or(&self.primary),
             (false, true) => &self.shifted,
             (false, false) => &self.primary,

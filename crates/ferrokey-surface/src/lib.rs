@@ -5,8 +5,8 @@
 //! window semantics.**
 //!
 //! The crate implements a custom Slint platform (`slint::platform::Platform`
-//! + `WindowAdapter`) on top of raw Wayland and X11 surfaces, so the exact
-//! same `.slint` UI works on every backend:
+//! and `WindowAdapter`) on top of raw Wayland and X11 surfaces, so the
+//! exact same `.slint` UI works on every backend:
 //!
 //! ```text
 //!                     Slint

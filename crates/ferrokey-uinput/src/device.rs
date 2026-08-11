@@ -85,12 +85,12 @@ impl VirtualKeyboard {
 
     /// Enumerate the `/dev/input/event*` nodes for this device.
     pub fn dev_nodes(&mut self) -> Result<Vec<std::path::PathBuf>, UinputError> {
-        let mut nodes = self
+        let nodes = self
             .device
             .enumerate_dev_nodes_blocking()
             .map_err(UinputError::DevNodes)?;
         let mut out = Vec::new();
-        while let Some(res) = nodes.next() {
+        for res in nodes {
             let path = res.map_err(UinputError::DevNodes)?;
             out.push(path);
         }

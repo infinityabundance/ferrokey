@@ -182,6 +182,5 @@ mod tests {
     fn magic_and_limits() {
         assert_eq!(MAGIC, b"FK01");
         assert_eq!(PROTOCOL_VERSION, 1);
-        assert!(MAX_FRAME_LEN > 0);
     }
 }

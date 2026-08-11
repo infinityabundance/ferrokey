@@ -293,28 +293,25 @@ impl Surface for WaylandSurface {
                 Some(d) => d.saturating_duration_since(std::time::Instant::now()),
                 None => Duration::from_millis(500),
             };
-            match self.queue.prepare_read() {
-                Some(guard) => {
-                    let backend = self.conn.backend();
-                    let fd = backend.poll_fd();
-                    let mut fds = [nix::poll::PollFd::new(fd, nix::poll::PollFlags::POLLIN)];
-                    let timeout_ms = remaining.as_millis().min(u16::MAX as u128) as u16;
-                    let n = nix::poll::poll(&mut fds, nix::poll::PollTimeout::from(timeout_ms))
-                        .map_err(|e| SurfaceError::Io(e.to_string()))?;
-                    if n == 0 {
-                        return Ok(Vec::new());
-                    }
-                    guard
-                        .read()
-                        .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+            if let Some(guard) = self.queue.prepare_read() {
+                let backend = self.conn.backend();
+                let fd = backend.poll_fd();
+                let mut fds = [nix::poll::PollFd::new(fd, nix::poll::PollFlags::POLLIN)];
+                let timeout_ms = remaining.as_millis().min(u128::from(u16::MAX)) as u16;
+                let n = nix::poll::poll(&mut fds, nix::poll::PollTimeout::from(timeout_ms))
+                    .map_err(|e| SurfaceError::Io(e.to_string()))?;
+                if n == 0 {
+                    return Ok(Vec::new());
                 }
-                None => {
-                    self.conn
-                        .flush()
-                        .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
-                    if remaining == Duration::ZERO {
-                        return Ok(Vec::new());
-                    }
+                guard
+                    .read()
+                    .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+            } else {
+                self.conn
+                    .flush()
+                    .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+                if remaining == Duration::ZERO {
+                    return Ok(Vec::new());
                 }
             }
         }
@@ -536,15 +533,11 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for WlState {
                 height,
             } => {
                 p.ack_configure(serial);
-                let width = if width == 0 {
-                    s.pending_size.0
-                } else {
-                    width as u32
-                };
+                let width = if width == 0 { s.pending_size.0 } else { width };
                 let height = if height == 0 {
                     s.pending_size.1
                 } else {
-                    height as u32
+                    height
                 };
                 s.configured = true;
                 s.events.push_back(SurfaceEvent::Resized { width, height });
