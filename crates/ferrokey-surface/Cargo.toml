@@ -1,0 +1,28 @@
+[package]
+name = "ferrokey-surface"
+description = "Ferrokey window-system integration: capability-driven Wayland/X11 surfaces and the custom Slint platform adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ferrokey-core = { path = "../ferrokey-core" }
+wayland-client.workspace = true
+wayland-protocols.workspace = true
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
+wayland-backend.workspace = true
+x11rb.workspace = true
+slint.workspace = true
+log.workspace = true
+thiserror.workspace = true
+nix.workspace = true
+
+[features]
+default = ["wayland", "x11"]
+wayland = []
+x11 = []
+

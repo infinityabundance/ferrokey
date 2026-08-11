@@ -1,0 +1,57 @@
+// main.slint — the Ferrokey OSK root.
+//
+// Renders the keyboard plus a status line. Window semantics (no-focus
+// guarantees) come from ferrokey-surface, never from this file.
+
+import { Keyboard } from "keyboard.slint";
+import { KeyData } from "key.slint";
+
+export component MainWindow inherits Window {
+    in property <bool> degraded: false;
+    in property <string> status-line: "";
+    in property <bool> text-mode: false;
+    in property <[KeyData]> row1: [];
+    in property <[KeyData]> row2: [];
+    in property <[KeyData]> row3: [];
+    in property <[KeyData]> row4: [];
+    in property <[KeyData]> row5: [];
+    in property <[KeyData]> row6: [];
+
+    callback key-pressed(string);
+    callback key-released(string);
+
+    background: #111418;
+    title: "Ferrokey";
+    no-frame: true;
+    width: 920px;
+    height: 342px;
+
+    VerticalLayout {
+        padding: 0;
+        spacing: 0;
+
+        if root.status-line != "": Rectangle {
+            height: 24px;
+            background: #1b2027;
+            Text {
+                text: root.status-line;
+                color: #c9d1d9;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        Keyboard {
+            degraded: root.degraded;
+            row1: root.row1;
+            row2: root.row2;
+            row3: root.row3;
+            row4: root.row4;
+            row5: root.row5;
+            row6: root.row6;
+            key-pressed(name) => root.key-pressed(name);
+            key-released(name) => root.key-released(name);
+        }
+    }
+}

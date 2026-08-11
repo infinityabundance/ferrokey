@@ -1,0 +1,150 @@
+# English (UK) keyboard layout.
+id: gb
+name: English (UK)
+keys:
+  # ── Escape / function row ─────────────────────────────────────────────
+  escape:        { primary: esc, repeatable: false }
+  f1:            { primary: f1 }
+  f2:            { primary: f2 }
+  f3:            { primary: f3 }
+  f4:            { primary: f4 }
+  f5:            { primary: f5 }
+  f6:            { primary: f6 }
+  f7:            { primary: f7 }
+  f8:            { primary: f8 }
+  f9:            { primary: f9 }
+  f10:           { primary: f10 }
+  f11:           { primary: f11 }
+  f12:           { primary: f12 }
+  f13:           { primary: f13 }
+  f14:           { primary: f14 }
+  f15:           { primary: f15 }
+  f16:           { primary: f16 }
+  f17:           { primary: f17 }
+  f18:           { primary: f18 }
+  f19:           { primary: f19 }
+  f20:           { primary: f20 }
+  f21:           { primary: f21 }
+  f22:           { primary: f22 }
+  f23:           { primary: f23 }
+  f24:           { primary: f24 }
+
+  # ── Number row ────────────────────────────────────────────────────────
+  grave:         { primary: "`", shifted: "¬" }
+  "1":           { primary: "1", shifted: "!" }
+  "2":           { primary: "2", shifted: '"' }
+  "3":           { primary: "3", shifted: "£" }
+  "4":           { primary: "4", shifted: "$", altgr: "€" }
+  "5":           { primary: "5", shifted: "%" }
+  "6":           { primary: "6", shifted: "^" }
+  "7":           { primary: "7", shifted: "&" }
+  "8":           { primary: "8", shifted: "*" }
+  "9":           { primary: "9", shifted: "(" }
+  "0":           { primary: "0", shifted: ")" }
+  minus:         { primary: "-", shifted: "_" }
+  equal:         { primary: "=", shifted: "+" }
+  backspace:     { primary: backspace }
+
+  # ── Top letter row ────────────────────────────────────────────────────
+  tab:           { primary: tab }
+  q:             { primary: q, shifted: Q }
+  w:             { primary: w, shifted: W }
+  e:             { primary: e, shifted: E, altgr: é }
+  r:             { primary: r, shifted: R }
+  t:             { primary: t, shifted: T }
+  y:             { primary: y, shifted: Y }
+  u:             { primary: u, shifted: U, altgr: ú }
+  i:             { primary: i, shifted: I, altgr: í }
+  o:             { primary: o, shifted: O, altgr: ó }
+  p:             { primary: p, shifted: P }
+  left-bracket:  { primary: "[", shifted: "{" }
+  right-bracket: { primary: "]", shifted: "}" }
+  backslash:     { primary: "\\", shifted: "|" }
+
+  # ── Home row ──────────────────────────────────────────────────────────
+  caps-lock:     { primary: caps, repeatable: false }
+  a:             { primary: a, shifted: A, altgr: á }
+  s:             { primary: s, shifted: S }
+  d:             { primary: d, shifted: D }
+  f:             { primary: f, shifted: F }
+  g:             { primary: g, shifted: G }
+  h:             { primary: h, shifted: H }
+  j:             { primary: j, shifted: J }
+  k:             { primary: k, shifted: K }
+  l:             { primary: l, shifted: L }
+  semicolon:     { primary: ";", shifted: ":" }
+  apostrophe:    { primary: "'", shifted: "@" }
+  enter:         { primary: enter }
+
+  # ── Bottom row ────────────────────────────────────────────────────────
+  left-shift:    { primary: shift, repeatable: false }
+  intl-backslash: { primary: "\\", shifted: "|" }
+  z:             { primary: z, shifted: Z }
+  x:             { primary: x, shifted: X }
+  c:             { primary: c, shifted: C }
+  v:             { primary: v, shifted: V }
+  b:             { primary: b, shifted: B }
+  n:             { primary: n, shifted: N }
+  m:             { primary: m, shifted: M }
+  comma:         { primary: ",", shifted: "<" }
+  dot:           { primary: ".", shifted: ">" }
+  slash:         { primary: "/", shifted: "?" }
+  right-shift:   { primary: shift, repeatable: false }
+
+  # ── Modifiers / space ─────────────────────────────────────────────────
+  left-ctrl:     { primary: ctrl, repeatable: false }
+  left-alt:      { primary: alt, repeatable: false }
+  space:         { primary: " " }
+  right-alt:     { primary: altgr, repeatable: false }
+  right-ctrl:    { primary: ctrl, repeatable: false }
+  left-meta:     { primary: super, repeatable: false }
+  right-meta:    { primary: super, repeatable: false }
+  menu:          { primary: menu, repeatable: false }
+  compose:       { primary: compose, repeatable: false }
+
+  # ── Lock keys ─────────────────────────────────────────────────────────
+  num-lock:      { primary: num, repeatable: false }
+  scroll-lock:   { primary: scroll, repeatable: false }
+
+  # ── Navigation / editing ──────────────────────────────────────────────
+  insert:        { primary: ins }
+  delete:        { primary: del }
+  home:          { primary: home }
+  end:           { primary: end }
+  page-up:       { primary: pgup }
+  page-down:     { primary: pgdn }
+  up:            { primary: "↑" }
+  down:          { primary: "↓" }
+  left:          { primary: "←" }
+  right:         { primary: "→" }
+
+  # ── Numeric keypad ────────────────────────────────────────────────────
+  kp0:           { primary: "0" }
+  kp1:           { primary: "1" }
+  kp2:           { primary: "2" }
+  kp3:           { primary: "3" }
+  kp4:           { primary: "4" }
+  kp5:           { primary: "5" }
+  kp6:           { primary: "6" }
+  kp7:           { primary: "7" }
+  kp8:           { primary: "8" }
+  kp9:           { primary: "9" }
+  kp-decimal:    { primary: "." }
+  kp-enter:      { primary: enter }
+  kp-add:        { primary: "+" }
+  kp-subtract:   { primary: "-" }
+  kp-multiply:   { primary: "*" }
+  kp-divide:     { primary: "/" }
+  kp-equal:      { primary: "=" }
+  kp-comma:      { primary: "," }
+
+  # ── Media / system ────────────────────────────────────────────────────
+  mute:          { primary: mute, repeatable: false }
+  volume-down:   { primary: vol-, repeatable: false }
+  volume-up:     { primary: vol+, repeatable: false }
+  play-pause:    { primary: play, repeatable: false }
+  next-song:     { primary: next, repeatable: false }
+  previous-song: { primary: prev, repeatable: false }
+  stop:          { primary: stop, repeatable: false }
+  brightness-down: { primary: dim, repeatable: false }
+  brightness-up:   { primary: bright, repeatable: false }

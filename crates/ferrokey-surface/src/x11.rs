@@ -1,0 +1,437 @@
+//! X11 surface backend (native Xorg and XWayland).
+//!
+//! X11 has an explicit concept for a no-focus window: the ICCCM **No Input**
+//! focus model —
+//!
+//! ```text
+//! WM_HINTS.input = False
+//! WM_TAKE_FOCUS absent
+//! ```
+//!
+//! `input = False` requests that the window manager not assign keyboard
+//! focus to this top-level window. On top of that Ferrokey sets:
+//!
+//! ```text
+//! _NET_WM_WINDOW_TYPE = _NET_WM_WINDOW_TYPE_DOCK
+//! _NET_WM_STATE       = _NET_WM_STATE_ABOVE | _NET_WM_STATE_SKIP_TASKBAR
+//!                      | _NET_WM_STATE_SKIP_PAGER
+//! ```
+//!
+//! (and optionally `override_redirect`, controlled by the caller).
+//!
+//! Rendering uses `XPutImage` with a 32-bit ZPixmap. Slint's
+//! `PremultipliedRgbaColor` is memory-ordered R,G,B,A; ZPixmap on
+//! little-endian servers is B,G,R,0 — so one R/B swap pass is needed.
+
+use crate::{PointerButton, Surface, SurfaceBackend, SurfaceError, SurfaceEvent};
+use std::collections::VecDeque;
+use std::time::Duration;
+
+use x11rb::connection::Connection;
+use x11rb::properties::WmHints;
+use x11rb::protocol::xproto::{
+    AtomEnum, ConnectionExt as XProtoConnectionExt, CreateWindowAux, EventMask, ImageFormat,
+    PropMode, WindowClass,
+};
+use x11rb::protocol::Event;
+use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
+
+/// X11 window dimensions.
+#[derive(Debug, Clone, Copy)]
+pub struct WindowGeometry {
+    pub width: u16,
+    pub height: u16,
+}
+
+/// Options for the X11 window.
+#[derive(Debug, Clone)]
+pub struct X11Options {
+    /// Display string (e.g. `":0"`); `None` uses `$DISPLAY`.
+    pub display: Option<String>,
+    /// Window title.
+    pub title: String,
+    /// Bypass the window manager entirely (`override_redirect`).
+    pub override_redirect: bool,
+}
+
+impl Default for X11Options {
+    fn default() -> Self {
+        X11Options {
+            display: None,
+            title: "Ferrokey Virtual Keyboard".into(),
+            override_redirect: false,
+        }
+    }
+}
+
+/// A no-focus, above-others X11 window.
+pub struct X11Surface {
+    conn: RustConnection,
+    #[allow(dead_code)]
+    screen_num: usize,
+    window: u32,
+    gc: u32,
+    width: u32,
+    height: u32,
+    depth: u8,
+    pending_events: VecDeque<SurfaceEvent>,
+    visible: bool,
+    ready: bool,
+}
+
+impl X11Surface {
+    /// Connect and create the window (unmapped until `set_visible`).
+    pub fn create(options: X11Options) -> Result<Self, SurfaceError> {
+        let (conn, screen_num) = x11rb::connect(options.display.as_deref())
+            .map_err(|e| SurfaceError::Connect(e.to_string()))?;
+        let screen = &conn.setup().roots[screen_num];
+
+        let window = conn
+            .generate_id()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        let event_mask = EventMask::BUTTON_PRESS
+            | EventMask::BUTTON_RELEASE
+            | EventMask::POINTER_MOTION
+            | EventMask::EXPOSURE
+            | EventMask::STRUCTURE_NOTIFY;
+        let aux = CreateWindowAux::new()
+            .background_pixel(screen.black_pixel)
+            .event_mask(event_mask)
+            .override_redirect(if options.override_redirect { 1 } else { 0 });
+        conn.create_window(
+            screen.root_depth,
+            window,
+            screen.root,
+            0,
+            0,
+            1,
+            1,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &aux,
+        )
+        .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+        .check()
+        .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+
+        let gc = conn
+            .generate_id()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        conn.create_gc(gc, window, &Default::default())
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+            .check()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+
+        conn.change_property8(
+            PropMode::REPLACE,
+            window,
+            AtomEnum::WM_NAME,
+            AtomEnum::STRING,
+            options.title.as_bytes(),
+        )
+        .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+
+        // ICCCM No-Input focus model: never accept keyboard focus.
+        WmHints {
+            input: Some(false),
+            ..Default::default()
+        }
+        .set(&conn, window)
+        .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+        .check()
+        .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+
+        Self::set_ewmh(&conn, window)?;
+
+        // WM_DELETE_WINDOW so the WM can request closure cleanly.
+        let wm_protocols = conn
+            .intern_atom(false, b"WM_PROTOCOLS")
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+            .reply()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+            .atom;
+        let wm_delete = conn
+            .intern_atom(false, b"WM_DELETE_WINDOW")
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+            .reply()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+            .atom;
+        conn.change_property32(
+            PropMode::REPLACE,
+            window,
+            wm_protocols,
+            AtomEnum::ATOM,
+            &[wm_delete],
+        )
+        .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+
+        conn.flush()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+
+        let depth = screen.root_depth;
+        Ok(X11Surface {
+            conn,
+            screen_num,
+            window,
+            gc,
+            width: 0,
+            height: 0,
+            depth,
+            pending_events: VecDeque::new(),
+            visible: false,
+            ready: false,
+        })
+    }
+
+    fn set_ewmh(conn: &RustConnection, window: u32) -> Result<(), SurfaceError> {
+        let intern = |name: &[u8]| -> Result<u32, SurfaceError> {
+            Ok(conn
+                .intern_atom(false, name)
+                .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+                .reply()
+                .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+                .atom)
+        };
+        let type_dock = intern(b"_NET_WM_WINDOW_TYPE_DOCK")?;
+        let wm_type = intern(b"_NET_WM_WINDOW_TYPE")?;
+        conn.change_property32(
+            PropMode::REPLACE,
+            window,
+            wm_type,
+            AtomEnum::ATOM,
+            &[type_dock],
+        )
+        .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+
+        let above = intern(b"_NET_WM_STATE_ABOVE")?;
+        let skip_taskbar = intern(b"_NET_WM_STATE_SKIP_TASKBAR")?;
+        let skip_pager = intern(b"_NET_WM_STATE_SKIP_PAGER")?;
+        let wm_state = intern(b"_NET_WM_STATE")?;
+        conn.change_property32(
+            PropMode::REPLACE,
+            window,
+            wm_state,
+            AtomEnum::ATOM,
+            &[above, skip_taskbar, skip_pager],
+        )
+        .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        Ok(())
+    }
+
+    fn drain_x11(&mut self) -> Result<(), SurfaceError> {
+        loop {
+            let event = self
+                .conn
+                .poll_for_event()
+                .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+            match event {
+                None => break,
+                Some(event) => self.handle_event(event),
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_event(&mut self, event: Event) {
+        match event {
+            Event::ButtonPress(e) => {
+                let button = match e.detail {
+                    1 => PointerButton::Left,
+                    2 => PointerButton::Middle,
+                    3 => PointerButton::Right,
+                    _ => return,
+                };
+                self.pending_events.push_back(SurfaceEvent::PointerPressed {
+                    x: f64::from(e.event_x),
+                    y: f64::from(e.event_y),
+                    button,
+                });
+            }
+            Event::ButtonRelease(e) => {
+                let button = match e.detail {
+                    1 => PointerButton::Left,
+                    2 => PointerButton::Middle,
+                    3 => PointerButton::Right,
+                    _ => return,
+                };
+                self.pending_events
+                    .push_back(SurfaceEvent::PointerReleased {
+                        x: f64::from(e.event_x),
+                        y: f64::from(e.event_y),
+                        button,
+                    });
+            }
+            Event::MotionNotify(e) => {
+                self.pending_events.push_back(SurfaceEvent::PointerMoved {
+                    x: f64::from(e.event_x),
+                    y: f64::from(e.event_y),
+                });
+            }
+            Event::Expose(_) => {
+                self.ready = true;
+            }
+            Event::ConfigureNotify(e) => {
+                if e.width != 0 && e.height != 0 {
+                    self.width = u32::from(e.width);
+                    self.height = u32::from(e.height);
+                    self.pending_events.push_back(SurfaceEvent::Resized {
+                        width: u32::from(e.width),
+                        height: u32::from(e.height),
+                    });
+                }
+            }
+            Event::ClientMessage(_e) => {
+                // WM_DELETE_WINDOW: the WM asks us to close.
+                self.pending_events.push_back(SurfaceEvent::CloseRequested);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Surface for X11Surface {
+    fn backend(&self) -> SurfaceBackend {
+        SurfaceBackend::X11NoInput
+    }
+
+    fn set_size(&mut self, width: u32, height: u32) -> Result<(), SurfaceError> {
+        if width == 0
+            || height == 0
+            || width > crate::wayland::MAX_DIMENSION
+            || height > crate::wayland::MAX_DIMENSION
+        {
+            return Err(SurfaceError::Unsupported(format!(
+                "invalid size {width}x{height}"
+            )));
+        }
+        self.width = width;
+        self.height = height;
+        let _ = self.conn.configure_window(
+            self.window,
+            &x11rb::protocol::xproto::ConfigureWindowAux::new()
+                .width(width.min(u16::MAX as u32))
+                .height(height.min(u16::MAX as u32)),
+        );
+        self.conn
+            .flush()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        Ok(())
+    }
+
+    fn present(
+        &mut self,
+        buffer: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+    ) -> Result<(), SurfaceError> {
+        // X11 ZPixmap at depth 24 is B,G,R,0 on little-endian servers; Slint
+        // gives R,G,B,A. Swap R and B into a scratch buffer.
+        let bytes = (height as usize)
+            .checked_mul(stride as usize)
+            .ok_or_else(|| SurfaceError::Unsupported("size overflow".into()))?;
+        if buffer.len() < bytes {
+            return Err(SurfaceError::Unsupported("buffer too small".into()));
+        }
+        let mut x11_buf = vec![0u8; bytes];
+        for (dst, src) in x11_buf
+            .chunks_exact_mut(4)
+            .zip(buffer[..bytes].chunks_exact(4))
+        {
+            dst[0] = src[2]; // B
+            dst[1] = src[1]; // G
+            dst[2] = src[0]; // R
+            dst[3] = 0; // X
+        }
+        self.conn
+            .put_image(
+                ImageFormat::Z_PIXMAP,
+                self.window,
+                self.gc,
+                width as u16,
+                height as u16,
+                0,
+                0,
+                0,
+                self.depth,
+                &x11_buf,
+            )
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+            .check()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        self.conn
+            .flush()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        Ok(())
+    }
+
+    fn set_visible(&mut self, visible: bool) -> Result<(), SurfaceError> {
+        self.visible = visible;
+        if visible {
+            self.conn
+                .map_window(self.window)
+                .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+                .check()
+                .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+            self.conn
+                .flush()
+                .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+            self.ready = true;
+        } else {
+            self.conn
+                .unmap_window(self.window)
+                .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+            self.conn
+                .flush()
+                .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn poll_events(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> Result<Vec<SurfaceEvent>, SurfaceError> {
+        self.drain_x11()?;
+        if !self.pending_events.is_empty() {
+            return Ok(self.pending_events.drain(..).collect());
+        }
+        if timeout == Some(Duration::ZERO) {
+            return Ok(Vec::new());
+        }
+        // Wait for readability on the X11 socket, bounded by the timeout.
+        let ready = {
+            let mut fds = [nix::poll::PollFd::new(
+                std::os::fd::AsFd::as_fd(self.conn.stream()),
+                nix::poll::PollFlags::POLLIN,
+            )];
+            let timeout_ms = timeout
+                .map(|t| t.as_millis().min(u16::MAX as u128) as u16)
+                .unwrap_or(500);
+            nix::poll::poll(&mut fds, nix::poll::PollTimeout::from(timeout_ms))
+                .map_err(|e| SurfaceError::Io(e.to_string()))?
+                > 0
+        };
+        if ready {
+            self.drain_x11()?;
+        }
+        Ok(self.pending_events.drain(..).collect())
+    }
+
+    fn scale_factor(&self) -> f32 {
+        1.0
+    }
+
+    fn is_ready(&self) -> bool {
+        self.ready
+    }
+}
+
+impl Drop for X11Surface {
+    fn drop(&mut self) {
+        let _ = self.conn.destroy_window(self.window);
+        let _ = self.conn.flush();
+    }
+}

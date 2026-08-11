@@ -1,0 +1,58 @@
+[package]
+name = "ferrokey"
+description = "Ferrokey: the on-screen keyboard that preserves target focus via kernel-level input injection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ferrokey"
+path = "src/main.rs"
+
+[dependencies]
+ferrokey-core = { path = "../../crates/ferrokey-core" }
+ferrokey-protocol = { path = "../../crates/ferrokey-protocol" }
+ferrokey-layouts = { path = "../../crates/ferrokey-layouts" }
+ferrokey-surface = { path = "../../crates/ferrokey-surface" }
+slint.workspace = true
+log.workspace = true
+nix.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true
+
+[lints.rust]
+# The Slint code generator emits `#[allow(unsafe_code)]` in its output, so
+# `forbid` is not usable here (unlike the library crates). `deny` still
+# fails the build on any *unannotated* unsafe code.
+unsafe_code = "deny"
+
+[lints.clippy]
+# Groups at priority -1 so the allows below (priority 0) override them.
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Mirrors the workspace allow-list (workspace lints cannot be inherited
+# together with a local override).
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+too_many_lines = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+module_name_repetitions = "allow"
+struct_field_names = "allow"
+enum_glob_use = "allow"
+wildcard_imports = "allow"
+map_unwrap_or = "allow"
+return_self_not_must_use = "allow"
+unnecessary_wraps = "allow"
+default_constructed_unit_structs = "allow"
+unused_self = "allow"
+manual_let_else = "allow"

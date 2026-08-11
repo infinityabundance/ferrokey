@@ -1,0 +1,53 @@
+// key.slint — a single OSK key.
+//
+// Pure UI: the key reports raw pointer-down / pointer-up through `pressed`
+// and `released`. All semantics (modifiers, sticky keys, repeat) live in
+// ferrokey-core; nothing here knows about layouts beyond the display label.
+
+export struct KeyData {
+    /// Physical key name (see ferrokey-core PhysicalKey::name).
+    name: string,
+    /// Symbol to display on the key cap.
+    label: string,
+    /// Relative width factor (space is wider than a letter).
+    width: float,
+}
+
+export component Key inherits Rectangle {
+    in property <KeyData> key-data: { name: "", label: "", width: 1.0 };
+    callback pressed;
+    callback released;
+
+    property <bool> down: false;
+
+    width: max(44px, key-data.width * 58px);
+    height: 52px;
+    border-radius: 8px;
+    background: down ? #4a7fb8 : #262b33;
+    border-width: 1px;
+    border-color: down ? #6a9fd0 : #3a4049;
+    drop-shadow-blur: 4px;
+    drop-shadow-color: #00000066;
+    drop-shadow-offset-y: 2px;
+
+    Text {
+        text: key-data.label;
+        color: #e8eaed;
+        font-size: 17px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        letter-spacing: 0.5px;
+    }
+
+    TouchArea {
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.down) {
+                root.down = true;
+                root.pressed();
+            } else if (ev.kind == PointerEventKind.up) {
+                root.down = false;
+                root.released();
+            }
+        }
+    }
+}

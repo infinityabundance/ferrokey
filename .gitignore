@@ -1,0 +1,27 @@
+# Build products
+/target
+**/target
+Cargo.lock.orig
+
+# Local environment
+.env
+.local/
+
+# Editor cruft
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Evidence & test artifacts (persisted only under testing/evidence by explicit request)
+testing/evidence/*
+!testing/evidence/.gitkeep
+testing/vm/snapshots/*
+!testing/vm/snapshots/.gitkeep
+testing/vm/images/*.qcow2
+testing/vm/images/*.img
+testing/vm/overlays/*.qcow2
+
+# Runtime state
+*.log
+ferrokeyd.sock

@@ -1,0 +1,20 @@
+[package]
+name = "ferrokey-uinput"
+description = "Ferrokey uinput device: explicit capability set, event emission, defensive held-key ledger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ferrokey-core = { path = "../ferrokey-core" }
+evdev.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+

@@ -1,0 +1,26 @@
+[package]
+name = "ferrokeyd"
+description = "Ferrokey daemon: privileged broker owning /dev/uinput, authenticated over a Unix socket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ferrokeyd"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ferrokey-core = { path = "../../crates/ferrokey-core" }
+ferrokey-uinput = { path = "../../crates/ferrokey-uinput" }
+ferrokey-protocol = { path = "../../crates/ferrokey-protocol" }
+log.workspace = true
+nix.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+

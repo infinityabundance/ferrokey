@@ -1,0 +1,17 @@
+[package]
+name = "ferrokey-protocol"
+description = "Ferrokey wire protocol: length-prefixed binary messages between ferrokey-ui and ferrokeyd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ferrokey-core = { path = "../ferrokey-core" }
+thiserror.workspace = true
+log.workspace = true
+nix.workspace = true
+

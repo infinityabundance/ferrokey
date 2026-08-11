@@ -1,0 +1,62 @@
+// keyboard.slint — the OSK itself: six physical rows driven by data models.
+//
+// The row contents (which physical keys, what labels, what widths) are
+// provided from Rust, derived from the active keyboard layout. This file
+// contains zero window/compositor policy — it only renders and reports
+// pointer intents.
+
+import { Key, KeyData } from "key.slint";
+
+component KeyRow inherits HorizontalLayout {
+    in property <[KeyData]> keys: [];
+    callback key-pressed(string);
+    callback key-released(string);
+
+    spacing: 6px;
+
+    for k in keys: Key {
+        key-data: k;
+        pressed => root.key-pressed(k.name);
+        released => root.key-released(k.name);
+    }
+}
+
+export component Keyboard inherits Rectangle {
+    in property <[KeyData]> row1: [];
+    in property <[KeyData]> row2: [];
+    in property <[KeyData]> row3: [];
+    in property <[KeyData]> row4: [];
+    in property <[KeyData]> row5: [];
+    in property <[KeyData]> row6: [];
+    in property <bool> degraded: false;
+
+    callback key-pressed(string);
+    callback key-released(string);
+
+    background: transparent;
+
+    VerticalLayout {
+        padding: 6px;
+        spacing: 6px;
+
+        KeyRow { keys: row1; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
+        KeyRow { keys: row2; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
+        KeyRow { keys: row3; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
+        KeyRow { keys: row4; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
+        KeyRow { keys: row5; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
+        KeyRow { keys: row6; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
+    }
+
+    if root.degraded: Rectangle {
+        height: 22px;
+        border-radius: 6px;
+        background: #54381f;
+        Text {
+            text: "degraded mode: focus preservation unavailable";
+            color: #ffd9b3;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
