@@ -1,0 +1,64 @@
+#cloud-config
+# Ferrokey X11 court VM: headless Xorg with the dummy driver, no GPU needed.
+# Everything here is reproducible: a fresh VM provisions itself from this
+# file + the provision scripts (rule 7).
+ssh_pwauth: false
+disable_root: false
+
+users:
+  - name: court
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: [sudo]
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "__COURT_SSH_PUBKEY__"
+
+package_update: true
+packages:
+  - xserver-xorg-video-dummy
+  - xserver-xorg-core
+  - xinit
+  - x11-utils
+  - xdotool
+  - x11-xserver-utils
+  - xterm
+  - fonts-dejavu-core
+  - evtest
+  - libinput-tools
+  - procps
+  - curl
+  - jq
+  - libgtk-3-0
+  - libqt6widgets6
+
+write_files:
+  - path: /etc/X11/xorg.conf.d/99-ferrokey-dummy.conf
+    content: |
+      Section "Device"
+          Identifier  "DummyDevice"
+          Driver      "dummy"
+          VideoRam    65536
+      EndSection
+
+      Section "Monitor"
+          Identifier  "DummyMonitor"
+          HorizSync   5.0 - 1000.0
+          VertRefresh 5.0 - 1000.0
+          Modeline "1280x720" 74.48 1280 1336 1472 1664 720 721 724 746
+      EndSection
+
+      Section "Screen"
+          Identifier  "DummyScreen"
+          Device      "DummyDevice"
+          Monitor     "DummyMonitor"
+          DefaultDepth 24
+          SubSection "Display"
+              Depth 24
+              Modes "1280x720"
+          EndSubSection
+      EndSection
+
+runcmd:
+  - [ systemctl, disable, --now, systemd-resolved ]
+  - [ bash, /provision/10-base.sh ]

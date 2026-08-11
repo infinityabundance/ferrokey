@@ -1,0 +1,27 @@
+[package]
+name = "ferrokey-test-target-slint"
+description = "Court target: Slint text input reporting focus and text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ferrokey-test-target-slint"
+path = "src/main.rs"
+
+[dependencies]
+ferrokey-test-common = { path = "../common" }
+# The target is a *regular* Slint app (winit backend, software renderer so it
+# runs under the VM's dummy X server without GPU).
+slint = { version = "1.17.1", default-features = false, features = [
+    "std",
+    "backend-winit",
+    "renderer-winit-software",
+] }
+log = "0.4"
+
+[build-dependencies]
+slint-build = "1.17.1"
+
+[lints.rust]
+unsafe_code = "deny"

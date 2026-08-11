@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "common",
+    "x11",
+    "wayland",
+    "slint",
+    "gtk",
+    "virtinput",
+]
+# Note: the Qt target is a C++/CMake app (testing/targets/qt) built in the
+# targets Docker image; it has no Cargo manifest.
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+ferrokey-core = { path = "../../crates/ferrokey-core" }
+x11rb = { version = "0.14.0", features = ["allow-unsafe-code"] }
+wayland-client = "0.31.15"
+wayland-protocols = "0.32.13"
+slint = { version = "1.17.1", default-features = false, features = ["std", "compat-1-2"] }
+gtk = "0.18"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0"

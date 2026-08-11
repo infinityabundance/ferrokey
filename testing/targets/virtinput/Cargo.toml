@@ -1,0 +1,17 @@
+[package]
+name = "ferrokey-test-virtinput"
+description = "Court tool: creates a uinput virtual pointer/keyboard INSIDE the guest VM and commands it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ferrokey-test-virtinput"
+path = "src/main.rs"
+
+[dependencies]
+evdev = "0.13.2"
+log = "0.4"
+
+[lints.rust]
+unsafe_code = "forbid"

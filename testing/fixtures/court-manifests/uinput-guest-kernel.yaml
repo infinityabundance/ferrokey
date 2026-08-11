@@ -1,0 +1,9 @@
+# Test case manifest (rule 37).
+id: uinput.guest_kernel
+image: debian-12
+requires:
+  - uinput
+assert:
+  - device_registered
+  - explicit_capability_set
+  - device_unregistered_on_daemon_exit

@@ -1,0 +1,16 @@
+# Test case manifest (rule 37): machine-declared requirements + assertions.
+id: x11.focus_preservation
+image: debian-12
+requires:
+  - uinput
+  - x11
+  - xdotool
+target: ferrokey-test-target-x11
+assert:
+  - ferrokeyd_created_device
+  - wm_hints_input_false
+  - target_focused_before
+  - ferrokey_pointer_click_received
+  - target_focused_after
+  - injected_key_received
+  - no_stuck_keys

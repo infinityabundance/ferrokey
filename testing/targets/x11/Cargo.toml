@@ -1,0 +1,18 @@
+[package]
+name = "ferrokey-test-target-x11"
+description = "Court target: raw X11 window reporting focus and key events"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ferrokey-test-target-x11"
+path = "src/main.rs"
+
+[dependencies]
+ferrokey-test-common = { path = "../common" }
+x11rb.workspace = true
+log = "0.4"
+
+[lints.rust]
+unsafe_code = "forbid"

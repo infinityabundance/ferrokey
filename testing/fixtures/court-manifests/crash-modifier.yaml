@@ -1,0 +1,11 @@
+# Test case manifest (rule 37).
+id: crash.modifier.recovery
+image: debian-12
+requires:
+  - uinput
+  - x11
+target: ferrokey-test-target-x11
+assert:
+  - held_key_released_on_sigterm
+  - held_key_released_on_sigkill
+  - daemon_survives_ui_crash

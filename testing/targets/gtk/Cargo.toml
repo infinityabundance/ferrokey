@@ -1,0 +1,18 @@
+[package]
+name = "ferrokey-test-target-gtk"
+description = "Court target: GTK3 text entry reporting focus, text and key events"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ferrokey-test-target-gtk"
+path = "src/main.rs"
+
+[dependencies]
+ferrokey-test-common = { path = "../common" }
+gtk.workspace = true
+log = "0.4"
+
+[lints.rust]
+unsafe_code = "forbid"

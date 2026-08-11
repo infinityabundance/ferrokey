@@ -1,0 +1,15 @@
+# ferrokeyd configuration used inside the court VMs.
+#
+# The daemon is the privileged component (root in the VM). The unprivileged
+# `court` user (uid 1000) is whitelisted.
+socket_path: /tmp/ferrokeyd.sock
+allowed_uids: [1000]
+allowed_gids: []
+max_connections: 4
+rate:
+  burst: 400
+  per_second: 400
+max_held_keys: 16
+device_name: "Ferrokey Virtual Keyboard"
+socket_mode: 438  # 0o666: the socket must be reachable by the unprivileged
+                  # UI; the real authority is the SO_PEERCRED whitelist.

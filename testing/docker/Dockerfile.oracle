@@ -1,0 +1,35 @@
+# The VM oracle image: this is the ONLY place QEMU/KVM is launched from.
+#
+# The host runs `docker run` with this image; the image boots disposable
+# QEMU VMs (real guest kernels) where every uinput/Wayland/X11/desktop test
+# happens. The host input subsystem never enters the picture.
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        qemu-system-x86 \
+        qemu-utils \
+        cloud-image-utils \
+        openssh-client \
+        iproute2 \
+        curl \
+        jq \
+        bash \
+        coreutils \
+        util-linux \
+        procps \
+        python3 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Sanitized environment: the oracle must never see the host GUI session.
+ENV DISPLAY="" \
+    WAYLAND_DISPLAY="" \
+    XDG_RUNTIME_DIR="/tmp" \
+    DBUS_SESSION_BUS_ADDRESS="" \
+    XAUTHORITY="" \
+    SSH_AUTH_SOCK="" \
+    HOME="/root"
+
+WORKDIR /court
+ENTRYPOINT ["/bin/bash"]

@@ -1,0 +1,12 @@
+# Test case manifest (rule 37).
+id: ipc.security
+image: debian-12
+requires:
+  - uinput
+assert:
+  - unauthorized_peer_rejected
+  - authorized_peer_accepted
+  - malformed_frames_rejected
+  - key_up_without_down_rejected
+  - unknown_key_code_rejected
+  - flood_rate_limited

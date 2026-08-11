@@ -1,0 +1,39 @@
+#cloud-config
+# Ferrokey Wayland court VM: wayfire (wlroots) compositor nested in the dummy
+# X server, with XWayland. Real zwlr_layer_shell_v1 support.
+ssh_pwauth: false
+disable_root: false
+
+users:
+  - name: court
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: [sudo]
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "__COURT_SSH_PUBKEY__"
+
+package_update: true
+packages:
+  - wayfire
+  - libgl1-mesa-dri
+  - dbus
+  - xwayland
+  - xserver-xorg-video-dummy
+  - xserver-xorg-core
+  - xinit
+  - x11-utils
+  - xdotool
+  - xterm
+  - fonts-dejavu-core
+  - evtest
+  - libinput-tools
+  - procps
+  - curl
+  - jq
+  - libgtk-3-0
+  - libqt6widgets6
+
+runcmd:
+  - [ systemctl, disable, --now, systemd-resolved ]
+  - [ bash, /provision/10-base.sh ]

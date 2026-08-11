@@ -1,0 +1,59 @@
+# Compose convenience for the Ferrokey courts (rule 45: one command).
+#
+#   docker compose -f testing/docker/compose.yaml up builder
+#
+# The authoritative entrypoint is ./testing/scripts/run-all-courts.sh.
+services:
+  builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.builder
+    image: ferrokey-builder:latest
+    volumes:
+      - ../..:/repo:ro
+      - ferrokey-cargo-cache:/usr/local/cargo
+      - ferrokey-target-cache:/repo/target
+    environment:
+      CARGO_HOME: /usr/local/cargo
+      CARGO_TARGET_DIR: /repo/target
+      DISPLAY: ""
+      WAYLAND_DISPLAY: ""
+      XDG_RUNTIME_DIR: /tmp
+      DBUS_SESSION_BUS_ADDRESS: ""
+      XAUTHORITY: ""
+      SSH_AUTH_SOCK: ""
+    security_opt:
+      - no-new-privileges
+    cap_drop:
+      - ALL
+
+  oracle:
+    build:
+      context: .
+      dockerfile: Dockerfile.oracle
+    image: ferrokey-oracle:latest
+    volumes:
+      - ../..:/repo:ro
+      - ferrokey-vm-state:/court/state
+    devices:
+      - /dev/kvm:/dev/kvm
+
+  targets:
+    build:
+      context: .
+      dockerfile: Dockerfile.targets
+    image: ferrokey-targets:latest
+    volumes:
+      - ../../testing/targets:/targets:ro
+      - ferrokey-payload-targets:/target
+    environment:
+      CARGO_TARGET_DIR: /target
+      DISPLAY: ""
+      WAYLAND_DISPLAY: ""
+      XDG_RUNTIME_DIR: /tmp
+
+volumes:
+  ferrokey-cargo-cache:
+  ferrokey-target-cache:
+  ferrokey-payload-targets:
+  ferrokey-vm-state:

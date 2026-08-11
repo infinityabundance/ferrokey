@@ -1,0 +1,17 @@
+# Test case manifest (rule 37).
+id: wayland.layer_shell.focus_preservation
+image: debian-12
+compositor: wayfire (wlroots)
+requires:
+  - uinput
+  - wayland
+  - zwlr_layer_shell_v1
+  - xwayland
+target: ferrokey-test-target-wayland
+assert:
+  - layer_surface_keyboard_interactivity_none
+  - target_focused_before
+  - ferrokey_pointer_click_received
+  - target_focused_after
+  - injected_key_received
+  - no_stuck_keys

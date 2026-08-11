@@ -1,0 +1,16 @@
+# ferrokey UI configuration used inside the court VMs.
+layout: us
+socket_path: /tmp/ferrokeyd.sock
+width: 920
+height: 342
+x11_display: ":0"
+sticky:
+  latch_enabled: true
+  lock_enabled: true
+  tap_timeout_ms: 400
+  double_tap_timeout_ms: 500
+repeat:
+  enabled: true
+  delay_ms: 500
+  cadence_ms: 30
+force_degraded_banner: false

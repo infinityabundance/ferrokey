@@ -1,0 +1,12 @@
+# Test case manifest (rule 37).
+id: repeat.deterministic
+image: debian-12
+requires:
+  - uinput
+  - x11
+target: ferrokey-test-target-x11
+assert:
+  - immediate_key_down
+  - repeats_after_delay
+  - repeats_stop_on_release
+  - modifier_no_repeat
