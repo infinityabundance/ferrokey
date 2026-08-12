@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+readme = "README.md"
 # The umbrella is a thin re-export crate; ship only the manifest and lib.rs.
 # The library crates it re-exports are published under their own names, so
 # their sources (and the apps/courts that consume them) stay out of the
@@ -35,7 +36,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/infinityabundance/ferrokey"
@@ -81,11 +82,11 @@ tempfile = "3.20"
 # version + path: cargo resolves the path locally during development, and
 # replaces it with the crates.io version when publishing (a bare path
 # dependency is rejected by `cargo publish`).
-ferrokey-core = { version = "0.1.0", path = "crates/ferrokey-core" }
-ferrokey-layouts = { version = "0.1.0", path = "crates/ferrokey-layouts" }
-ferrokey-protocol = { version = "0.1.0", path = "crates/ferrokey-protocol" }
-ferrokey-surface = { version = "0.1.0", path = "crates/ferrokey-surface" }
-ferrokey-uinput = { version = "0.1.0", path = "crates/ferrokey-uinput" }
+ferrokey-core = { version = "0.1.1", path = "crates/ferrokey-core" }
+ferrokey-layouts = { version = "0.1.1", path = "crates/ferrokey-layouts" }
+ferrokey-protocol = { version = "0.1.1", path = "crates/ferrokey-protocol" }
+ferrokey-surface = { version = "0.1.1", path = "crates/ferrokey-surface" }
+ferrokey-uinput = { version = "0.1.1", path = "crates/ferrokey-uinput" }
 
 [profile.release]
 lto = "thin"

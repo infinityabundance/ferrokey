@@ -1087,7 +1087,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokey"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ferrokey-core",
  "ferrokey-layouts",
@@ -1098,7 +1098,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokey-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "serde",
@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokey-layouts"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ferrokey-core",
  "log",
@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokey-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ferrokey-core",
  "log",
@@ -1129,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokey-surface"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ferrokey-core",
  "log",
@@ -1145,7 +1145,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokey-ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "ferrokey-core",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokey-uinput"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evdev",
  "ferrokey-core",
@@ -1174,7 +1174,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokeyd"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "ferrokey-core",
