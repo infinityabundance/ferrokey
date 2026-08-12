@@ -27,8 +27,6 @@ pub struct DeviceOptions {
     pub name: String,
     /// Maximum simultaneously-held keys enforced by the ledger.
     pub max_held_keys: usize,
-    /// Optional `phys` string (e.g. a stable identifier for udev matching).
-    pub phys: Option<String>,
 }
 
 impl Default for DeviceOptions {
@@ -36,7 +34,6 @@ impl Default for DeviceOptions {
         DeviceOptions {
             name: DEVICE_NAME.to_string(),
             max_held_keys: crate::ledger::DEFAULT_MAX_HELD_KEYS,
-            phys: Some("ferrokey/virtual".to_string()),
         }
     }
 }
@@ -57,13 +54,11 @@ impl VirtualKeyboard {
         builder = builder
             .name(&options.name)
             .input_id(InputId::new(BUS, VENDOR_ID, PRODUCT_ID, VERSION_ID));
-        if let Some(phys) = &options.phys {
-            // `with_phys` requires a CStr; constructing it from a known-safe
-            // byte string. phys strings with interior NULs are invalid.
-            let c =
-                std::ffi::CString::new(phys.as_bytes()).map_err(|_| UinputError::InvalidPhys)?;
-            builder = builder.with_phys(&c).map_err(UinputError::Build)?;
-        }
+        // NOTE: do NOT use `VirtualDeviceBuilder::with_phys` here. evdev
+        // 0.13.2's `ui_set_phys` builds the ioctl with size 1
+        // (`_IOW(0x55, 108, c_char)`) while the kernel's `UI_SET_PHYS` is
+        // `_IOW(0x55, 108, char*)` (size 8 on 64-bit) — the numbers never
+        // match and the kernel replies EINVAL, failing device creation.
         let mut key_set = evdev::AttributeSet::new();
         for key in &keys {
             key_set.insert(*key);
@@ -124,9 +119,19 @@ impl KeySink for VirtualKeyboard {
         emit::emit_key_up(&mut self.device, code).map_err(|e| SinkError(e.to_string()))
     }
 
+    fn key_repeat(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
+        // Autorepeat (value=2) is not a state transition: the ledger is
+        // untouched and the kernel passes the event through unchanged.
+        let code = to_evdev_key(key);
+        emit::emit_key_repeat(&mut self.device, code).map_err(|e| SinkError(e.to_string()))
+    }
+
     fn release_all(&mut self) -> Result<(), SinkError> {
         let codes = self.ledger.drain();
         let keys: Vec<KeyCode> = codes.iter().map(|c| KeyCode::new(*c as u16)).collect();
+        if !keys.is_empty() {
+            log::info!("release_all: {} key(s)", keys.len());
+        }
         emit::emit_release_many(&mut self.device, keys.into_iter())
             .map_err(|e| SinkError(e.to_string()))
     }
@@ -139,8 +144,6 @@ pub enum UinputError {
     Open(io::Error),
     #[error("cannot configure/register the virtual device: {0}")]
     Build(io::Error),
-    #[error("invalid device phys string")]
-    InvalidPhys,
     #[error("cannot read device syspath: {0}")]
     Syspath(io::Error),
     #[error("cannot enumerate device nodes: {0}")]

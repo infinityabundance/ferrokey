@@ -5,7 +5,9 @@
 
 use ferrokey_test_common::{Reporter, TargetEvent};
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{ConnectionExt as _, CreateWindowAux, EventMask, WindowClass};
+use x11rb::protocol::xproto::{
+    AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, WindowClass,
+};
 use x11rb::protocol::Event;
 
 fn main() {
@@ -36,6 +38,17 @@ fn main() {
                     | EventMask::EXPOSURE
                     | EventMask::STRUCTURE_NOTIFY,
             ),
+    )
+    .unwrap();
+    // WM_NAME so `xdotool search --name ferrokey-test-target` can find us.
+    conn.change_property(
+        PropMode::REPLACE,
+        win,
+        AtomEnum::WM_NAME,
+        AtomEnum::STRING,
+        8,
+        24,
+        b"ferrokey-test-target-x11",
     )
     .unwrap();
     conn.map_window(win).unwrap();

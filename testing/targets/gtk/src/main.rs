@@ -43,19 +43,22 @@ fn main() {
     entry.connect_changed(move |e| {
         r.text(&e.text());
     });
+    // gtk-rs 0.18 (GTK3): `EventKey::keyval()` returns `gdk::keys::Key` which
+    // derefs to the raw keyval `u32`; the GTK4-era `append()` does not exist on
+    // GTK3's `gtk::Box`, so use the GTK3 `Container::add`/`pack_start` API.
     let r = reporter.clone();
     entry.connect_key_press_event(move |_, ev| {
-        r.key(u32::from(ev.get_keyval()), true);
+        r.key(*ev.keyval(), true);
         glib::Propagation::Proceed
     });
     let r = reporter.clone();
     entry.connect_key_release_event(move |_, ev| {
-        r.key(u32::from(ev.get_keyval()), false);
+        r.key(*ev.keyval(), false);
         glib::Propagation::Proceed
     });
 
-    vbox.append(&label);
-    vbox.append(&entry);
+    vbox.pack_start(&label, false, false, 0);
+    vbox.pack_start(&entry, false, false, 0);
     window.add(&vbox);
 
     window.connect_destroy(|_| gtk::main_quit());

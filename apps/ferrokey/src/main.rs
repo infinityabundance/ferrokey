@@ -28,8 +28,46 @@ use std::time::{Duration, Instant};
 slint::include_modules!();
 
 fn main() -> anyhow::Result<()> {
+    init_logging();
     let config = load_ui_config()?;
     run(&config)
+}
+
+/// A tiny stderr logger (the UI deliberately has no heavy logging deps).
+/// Courts inspect `ferrokey.log` for backend selection evidence, so the
+/// backend/detail lines must actually be emitted.
+struct StderrLogger(log::LevelFilter);
+
+impl log::Log for StderrLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= self.0
+    }
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            eprintln!(
+                "{} [{:5}] {}",
+                record.level(),
+                record.level(),
+                record.args()
+            );
+        }
+    }
+    fn flush(&self) {}
+}
+
+fn init_logging() {
+    let level = std::env::var("RUST_LOG")
+        .unwrap_or_else(|_| "info".into())
+        .to_ascii_lowercase();
+    let level = match level.as_str() {
+        "error" => log::LevelFilter::Error,
+        "warn" => log::LevelFilter::Warn,
+        "debug" => log::LevelFilter::Debug,
+        "trace" => log::LevelFilter::Trace,
+        _ => log::LevelFilter::Info,
+    };
+    let _ = log::set_boxed_logger(Box::new(StderrLogger(level)));
+    log::set_max_level(level);
 }
 
 fn load_ui_config() -> anyhow::Result<UiConfig> {
@@ -92,6 +130,14 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
                     .x11_display
                     .clone()
                     .or_else(|| config.x11_display.clone()),
+                // override_redirect: the window manager must never manage the
+                // OSK. This is the classic OSK approach — with a managed
+                // window, a WM's click-to-focus policy can still hand keyboard
+                // focus to the OSK on click, which is exactly what the focus
+                // invariant forbids. WM_HINTS.input=False + DOCK remain set
+                // for WM-visible semantics; override_redirect makes the WM
+                // non-participating entirely.
+                override_redirect: true,
                 ..Default::default()
             };
             let surface = ferrokey_surface::x11::X11Surface::create(options)
@@ -142,6 +188,14 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
         layout.clone(),
         sink,
     )));
+    log::info!(
+        "driver: repeat enabled={} delay={}ms cadence={}ms latch={} lock={}",
+        config.repeat.enabled,
+        config.repeat.delay_ms,
+        config.repeat.cadence_ms,
+        config.sticky.latch_enabled,
+        config.sticky.lock_enabled
+    );
 
     // ── Wire the UI callbacks ──────────────────────────────────────────────
     let ui_handle = ui.as_weak();
@@ -200,6 +254,14 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
         // 3. Key repeat cadence.
         if let Err(e) = driver.borrow_mut().tick_repeat(Instant::now()) {
             log::warn!("repeat tick failed: {e}");
+        }
+
+        // 3b. Repeat engine diagnostics (throttled).
+        if Instant::now().duration_since(last_status_update) > Duration::from_millis(500) {
+            let held: Vec<_> = driver.borrow().repeat().held_keys().collect();
+            if !held.is_empty() {
+                log::info!("repeat held: {held:?}");
+            }
         }
 
         // 4. Render when dirty.

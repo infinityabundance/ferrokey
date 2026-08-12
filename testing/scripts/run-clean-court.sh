@@ -10,12 +10,13 @@ sanitize_env
 echo "==> clean build court (empty caches, network: DECLARED REQUIRED for crates.io) =="
 "$DOCKER" volume rm -f ferrokey-clean-cargo ferrokey-clean-target >/dev/null 2>&1 || true
 "$DOCKER" run --rm \
-    --network bridge \
+    --network "${COURT_NETWORK:-bridge}" \
     -v "$REPO_ROOT:/repo:ro" \
     -v ferrokey-clean-cargo:/usr/local/cargo \
     -v ferrokey-clean-target:/repo/target \
     -e CARGO_HOME=/usr/local/cargo \
     -e CARGO_TARGET_DIR=/repo/target \
+    -e CARGO_INCREMENTAL=0 \
     -e DISPLAY= -e WAYLAND_DISPLAY= -e XDG_RUNTIME_DIR=/tmp \
     -e DBUS_SESSION_BUS_ADDRESS= -e XAUTHORITY= -e SSH_AUTH_SOCK= \
     --security-opt no-new-privileges \

@@ -9,6 +9,8 @@ set -euo pipefail
 cd /repo
 export CARGO_HOME=/usr/local/cargo
 export CARGO_TARGET_DIR=/repo/target
+# No incremental artifacts: the court volumes are tmpfs-backed and bounded.
+export CARGO_INCREMENTAL=0
 
 echo "== BUILD.001: workspace build =="
 cargo build --workspace --all-targets

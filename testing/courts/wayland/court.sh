@@ -12,9 +12,9 @@ set -euo pipefail
 source "$(dirname "$0")/../lib.sh"
 
 # Make sure the court user has a runtime dir (no login session in the VM).
-mkdir -p /run/user/1000
-chown court:court /run/user/1000
-chmod 700 /run/user/1000
+sudo mkdir -p /run/user/1000
+sudo chown court:court /run/user/1000
+sudo chmod 700 /run/user/1000
 
 start_xorg
 
@@ -91,4 +91,4 @@ else
 fi
 focus_after
 
-finish_court PASS "court" "wayland"
+finish_court "court" "wayland"

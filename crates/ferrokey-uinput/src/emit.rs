@@ -25,6 +25,12 @@ pub fn key_up_event(code: KeyCode) -> InputEvent {
     key_event(code, 0)
 }
 
+/// An autorepeat event (`EV_KEY` value=2). The kernel input core only passes
+/// repeats through with value 2; repeated value=1 for a held key is filtered.
+pub fn key_repeat_event(code: KeyCode) -> InputEvent {
+    key_event(code, 2)
+}
+
 /// Emit a key-down (with automatic `SYN_REPORT`).
 pub fn emit_key_down(device: &mut VirtualDevice, code: KeyCode) -> io::Result<()> {
     device.emit(&[key_down_event(code)])
@@ -33,6 +39,11 @@ pub fn emit_key_down(device: &mut VirtualDevice, code: KeyCode) -> io::Result<()
 /// Emit a key-up (with automatic `SYN_REPORT`).
 pub fn emit_key_up(device: &mut VirtualDevice, code: KeyCode) -> io::Result<()> {
     device.emit(&[key_up_event(code)])
+}
+
+/// Emit an autorepeat event (value=2, with automatic `SYN_REPORT`).
+pub fn emit_key_repeat(device: &mut VirtualDevice, code: KeyCode) -> io::Result<()> {
+    device.emit(&[key_repeat_event(code)])
 }
 
 /// Emit a tap: down then up, in a single batch (single `SYN_REPORT`).

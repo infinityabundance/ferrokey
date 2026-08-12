@@ -31,8 +31,17 @@ packages:
   - jq
   - libgtk-3-0
   - libqt6widgets6
+  - openbox
+  - strace
 
 write_files:
+  # Headless courts: let any local user start the dummy-driver X server
+  # (the Xorg.wrap console-user check would otherwise refuse SSH-only users).
+  - path: /etc/X11/Xwrapper.config
+    content: |
+      allowed_users=anybody
+      needs_root_rights=yes
+
   - path: /etc/X11/xorg.conf.d/99-ferrokey-dummy.conf
     content: |
       Section "Device"

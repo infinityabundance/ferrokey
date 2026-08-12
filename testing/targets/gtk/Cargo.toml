@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 ferrokey-test-common = { path = "../common" }
 gtk.workspace = true
+glib = "0.18"
 log = "0.4"
 
 [lints.rust]

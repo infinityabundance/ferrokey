@@ -71,6 +71,10 @@ fn encode_payload(msg: &Message) -> Result<Vec<u8>, CodecError> {
             out.push(Opcode::KeyUp as u8);
             out.extend_from_slice(&code.to_le_bytes());
         }
+        Message::KeyRepeat(code) => {
+            out.push(Opcode::KeyRepeat as u8);
+            out.extend_from_slice(&code.to_le_bytes());
+        }
         Message::ReleaseAll => {
             out.push(Opcode::ReleaseAll as u8);
         }
@@ -208,7 +212,7 @@ fn decode_payload(payload: &[u8]) -> Result<Message, CodecError> {
             }
             Ok(Message::CreateKeyboard)
         }
-        Opcode::KeyDown | Opcode::KeyUp => {
+        Opcode::KeyDown | Opcode::KeyUp | Opcode::KeyRepeat => {
             if payload.len() != 3 {
                 return Err(CodecError::Malformed(format!(
                     "key message with payload length {} (expected 3)",
@@ -218,8 +222,10 @@ fn decode_payload(payload: &[u8]) -> Result<Message, CodecError> {
             let code = u16::from_le_bytes([payload[1], payload[2]]);
             Ok(if op == Opcode::KeyDown {
                 Message::KeyDown(code)
-            } else {
+            } else if op == Opcode::KeyUp {
                 Message::KeyUp(code)
+            } else {
+                Message::KeyRepeat(code)
             })
         }
         Opcode::ReleaseAll => {
@@ -292,6 +298,7 @@ mod tests {
         round_trip(&Message::CreateKeyboard);
         round_trip(&Message::KeyDown(30));
         round_trip(&Message::KeyUp(42));
+        round_trip(&Message::KeyRepeat(30));
         round_trip(&Message::ReleaseAll);
         round_trip(&Message::Ping(0xDEAD_BEEF));
         round_trip(&Message::Pong(7));

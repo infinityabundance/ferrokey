@@ -119,13 +119,26 @@ def main() -> int:
         print(f"drain: {count} replies")
         return 0
 
-    # handshake + command sequence
+    # --hold SECONDS: keep the connection (and thus the virtual keyboard)
+    # alive after the command sequence, so courts can capture device evidence
+    # while the device exists.
+    hold = 0
+    if "--hold" in args:
+        i = args.index("--hold")
+        hold = int(args[i + 1])
+        args = args[:i] + args[i + 2:]
+
+    # handshake + command sequence. Tokens are individual argv entries
+    # (e.g. `handshake key-down 30 key-up 30 release-all`); each op consumes
+    # the following tokens it needs.
     error = False
-    for cmd in args:
-        parts = cmd.split()
-        op = parts[0]
+    tokens = list(args)
+    idx = 0
+    while idx < len(tokens):
+        op = tokens[idx]
         if op == "handshake":
-            sock.sendall(frame(OP_HELLO, bytes([1]) + struct.pack("<H", 4) + b"court"))
+            name = b"court"
+            sock.sendall(frame(OP_HELLO, bytes([1]) + struct.pack("<H", len(name)) + name))
             sock.sendall(frame(OP_CREATE))
             body = read_frame(sock)
             if body and body[0] == OP_OK:
@@ -133,10 +146,15 @@ def main() -> int:
             else:
                 print("handshake: FAILED", body)
                 error = True
-        elif op == "key-down":
-            sock.sendall(frame(OP_DOWN, struct.pack("<H", int(parts[1]))))
-        elif op == "key-up":
-            sock.sendall(frame(OP_UP, struct.pack("<H", int(parts[1]))))
+        elif op in ("key-down", "key-up"):
+            if idx + 1 >= len(tokens):
+                print(f"{op}: missing code")
+                error = True
+            else:
+                code = int(tokens[idx + 1])
+                opcode = OP_DOWN if op == "key-down" else OP_UP
+                sock.sendall(frame(opcode, struct.pack("<H", code)))
+                idx += 1
         elif op == "release-all":
             sock.sendall(frame(OP_RELEASE))
             body = read_frame(sock)
@@ -146,7 +164,9 @@ def main() -> int:
                 print("release-all: FAILED", body)
                 error = True
         elif op == "ping":
-            nonce = int(parts[1]) if len(parts) > 1 else 1
+            nonce = int(tokens[idx + 1]) if idx + 1 < len(tokens) else 1
+            if idx + 1 < len(tokens):
+                idx += 1
             sock.sendall(frame(OP_PING, struct.pack("<I", nonce)))
             body = read_frame(sock)
             if body and body[0] == OP_PONG and struct.unpack("<I", body[1:5])[0] == nonce:
@@ -175,6 +195,10 @@ def main() -> int:
         else:
             print(f"unknown command: {op}")
             error = True
+        idx += 1
+    if hold:
+        print(f"holding connection open for {hold}s...")
+        time.sleep(hold)
     return 1 if error else 0
 
 

@@ -137,9 +137,10 @@ pub trait Surface {
     /// Resize the surface.
     fn set_size(&mut self, width: u32, height: u32) -> Result<(), SurfaceError>;
 
-    /// Present a rendered frame. `buffer` is `width * height`
+    /// Present a rendered frame. `buffer` holds `width * height`
     /// [`slint::platform::software_renderer::PremultipliedRgbaColor`]s
-    /// (memory order R,G,B,A) with the given stride in pixels.
+    /// (memory order R,G,B,A); `stride` is the row stride **in bytes**
+    /// (a tightly packed buffer has `stride = width * 4`).
     fn present(
         &mut self,
         buffer: &[u8],

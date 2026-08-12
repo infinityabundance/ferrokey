@@ -15,6 +15,7 @@ ferrokey-test-common = { path = "../common" }
 # runs under the VM's dummy X server without GPU).
 slint = { version = "1.17.1", default-features = false, features = [
     "std",
+    "compat-1-2",
     "backend-winit",
     "renderer-winit-software",
 ] }

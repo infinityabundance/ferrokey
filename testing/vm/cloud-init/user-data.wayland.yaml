@@ -33,6 +33,41 @@ packages:
   - jq
   - libgtk-3-0
   - libqt6widgets6
+  - openbox
+
+write_files:
+  # Headless courts: let any local user start the dummy-driver X server
+  # (the Xorg.wrap console-user check would otherwise refuse SSH-only users).
+  - path: /etc/X11/Xwrapper.config
+    content: |
+      allowed_users=anybody
+      needs_root_rights=yes
+
+  - path: /etc/X11/xorg.conf.d/99-ferrokey-dummy.conf
+    content: |
+      Section "Device"
+          Identifier  "DummyDevice"
+          Driver      "dummy"
+          VideoRam    65536
+      EndSection
+
+      Section "Monitor"
+          Identifier  "DummyMonitor"
+          HorizSync   5.0 - 1000.0
+          VertRefresh 5.0 - 1000.0
+          Modeline "1280x720" 74.48 1280 1336 1472 1664 720 721 724 746
+      EndSection
+
+      Section "Screen"
+          Identifier  "DummyScreen"
+          Device      "DummyDevice"
+          Monitor     "DummyMonitor"
+          DefaultDepth 24
+          SubSection "Display"
+              Depth 24
+              Modes "1280x720"
+          EndSubSection
+      EndSection
 
 runcmd:
   - [ systemctl, disable, --now, systemd-resolved ]

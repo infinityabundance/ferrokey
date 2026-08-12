@@ -27,8 +27,31 @@ if [ ! -f "$BASE_IMAGE" ]; then
     echo "downloading base image $DISTRO"
     case "$DISTRO" in
         debian-12)
+            # NOTE: the *generic* image, not genericcloud — the trimmed cloud
+            # kernel (linux-image-cloud-amd64) ships no uinput module, so the
+            # court VM could never create the virtual keyboard.
+            curl -fL -o "$BASE_IMAGE.part" \
+                https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2
+            mv "$BASE_IMAGE.part" "$BASE_IMAGE"
+            ;;
+        debian-12-genericcloud)
             curl -fL -o "$BASE_IMAGE.part" \
                 https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
+            mv "$BASE_IMAGE.part" "$BASE_IMAGE"
+            ;;
+        ubuntu-24-04)
+            curl -fL -o "$BASE_IMAGE.part" \
+                https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+            mv "$BASE_IMAGE.part" "$BASE_IMAGE"
+            ;;
+        fedora-40)
+            curl -fL -o "$BASE_IMAGE.part" \
+                https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2
+            mv "$BASE_IMAGE.part" "$BASE_IMAGE"
+            ;;
+        arch-current)
+            curl -fL -o "$BASE_IMAGE.part" \
+                https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2
             mv "$BASE_IMAGE.part" "$BASE_IMAGE"
             ;;
         *)
@@ -103,6 +126,16 @@ SSH=(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
      -o ConnectTimeout=5 -o LogLevel=ERROR -i "$SSH_KEY")
 SCP=(scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "$SSH_KEY" -P "$SSH_PORT")
 
+# First boot runs cloud-init (package install + provision scripts). sshd comes
+# up before that finishes, so wait for cloud-init to complete — the courts
+# depend on jq/openbox/evtest/libinput being present.
+echo "waiting for cloud-init to finish..."
+"${SSH[@]}" -p "$SSH_PORT" court@127.0.0.1 "sudo cloud-init status --wait >/dev/null 2>&1 || true"
+"${SSH[@]}" -p "$SSH_PORT" court@127.0.0.1 \
+    "for i in \$(seq 1 120); do [ -f /var/lib/ferrokey-provisioned ] && exit 0; sleep 1; done; exit 1" \
+    || { echo "provisioning did not complete"; exit 1; }
+echo "cloud-init complete; provisioned"
+
 # ---------------------------------------------------------------------------
 # 5. Push the payload (rule 9: real binaries, real kernel path).
 # ---------------------------------------------------------------------------
@@ -117,8 +150,11 @@ SCP=(scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel
 #    write a receipt to ~/court-output.
 # ---------------------------------------------------------------------------
 if [ -f "/repo/testing/courts/$COURT/court.sh" ]; then
+    # The court script runs as the unprivileged `court` user; privileged steps
+    # (ferrokeyd, evtest, …) elevate per-command with sudo inside lib.sh. This
+    # keeps the SO_PEERCRED whitelist meaningful: clients are uid 1000.
     "${SSH[@]}" -p "$SSH_PORT" court@127.0.0.1 \
-        "cd ~/payload && sudo env RUN_ID=vm bash courts/$COURT/court.sh" \
+        "cd ~/payload && env RUN_ID=vm bash courts/$COURT/court.sh" \
         || echo "court script exit code: $?"
 else
     echo "no court script for $COURT"
@@ -129,7 +165,7 @@ fi
 # ---------------------------------------------------------------------------
 EVIDENCE="$STATE/evidence/$COURT"
 mkdir -p "$EVIDENCE"/{logs,devices,screenshots}
-"${SSH[@]}" -p "$SSH_PORT" court@127.0.0.1 "sudo cp /proc/bus/input/devices /home/court/court-output/devices.txt 2>/dev/null; sudo udevadm info --export-db > /home/court/court-output/udev.txt 2>/dev/null || true" || true
+"${SSH[@]}" -p "$SSH_PORT" court@127.0.0.1 "sudo cp /proc/bus/input/devices /home/court/court-output/devices.txt 2>/dev/null; sudo udevadm info --export-db > /home/court/court-output/udev.txt 2>/dev/null || true; sudo cp /var/log/Xorg.0.log /home/court/court-output/xorg-full.log 2>/dev/null || true" || true
 "${SCP[@]}" -r "court@127.0.0.1:court-output/." "$EVIDENCE/" 2>/dev/null || true
 cp "$STATE/logs/qemu-$SSH_PORT.log" "$EVIDENCE/logs/qemu.log" 2>/dev/null || true
 

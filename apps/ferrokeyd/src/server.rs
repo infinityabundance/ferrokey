@@ -196,7 +196,6 @@ pub fn serve_connection(stream: UnixStream, config: &DaemonConfig) -> Result<(),
     let peer = peer_identity(&stream).map_err(|e| ConnectionError::Io(e.to_string()))?;
     authorize(&peer, config)?;
     log::info!("peer {peer} authenticated");
-
     let mut state = ConnectionState {
         stream,
         decoder: Decoder::new(),
@@ -211,9 +210,16 @@ pub fn serve_connection(stream: UnixStream, config: &DaemonConfig) -> Result<(),
 
     let result = connection_loop(&mut state);
     // Recovery contract: never leave stuck keys behind.
+    log::info!("connection {peer} closing; releasing held keys");
     if let Err(e) = state.device.release_all() {
         log::error!("release_all failed on disconnect: {e}");
     }
+    log::info!("connection {peer} release complete");
+    // The release events must actually reach the compositor: destroying the
+    // uinput device immediately after emitting them lets the kernel flush the
+    // evdev client buffer before libinput reads it, silently dropping the
+    // key-ups. Keep the device alive briefly so the events are delivered.
+    std::thread::sleep(std::time::Duration::from_millis(250));
     result
 }
 
@@ -254,6 +260,37 @@ fn send(state: &mut ConnectionState, msg: &Message) -> Result<(), ConnectionErro
     Ok(())
 }
 
+/// Read and discard whatever the peer sends for at most `budget`, so a
+/// connection being torn down after a rate-limit violation ends with a clean
+/// FIN instead of an RST (which would destroy the ERROR frame already sent).
+/// Bounded: never blocks indefinitely, never decodes hostile input.
+fn drain_peer(state: &mut ConnectionState, budget: std::time::Duration) {
+    use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let mut fd = [PollFd::new(
+            std::os::fd::AsFd::as_fd(&state.stream),
+            PollFlags::POLLIN,
+        )];
+        let timeout =
+            PollTimeout::from(u16::try_from(remaining.as_millis().min(65535)).unwrap_or(65535));
+        match poll(&mut fd, timeout) {
+            Ok(n) if n > 0 => {
+                let mut tmp = [0u8; 4096];
+                match std::io::Read::read(&mut state.stream, &mut tmp) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+            _ => break,
+        }
+    }
+}
+
 /// Process whatever messages are currently available without blocking.
 /// Returns `Ok(true)` if any message was processed, `Ok(false)` if nothing
 /// was pending, and `Err` on EOF or protocol failure. Used by tests to drive
@@ -283,6 +320,11 @@ fn handle_message(state: &mut ConnectionState, message: Message) -> Result<(), C
             state,
             &Message::Error(ErrorCode::RateLimited, "rate limit exceeded".into()),
         );
+        // Drain the receive queue briefly before closing: dropping the socket
+        // while unread bytes are queued makes the kernel send RST, which
+        // discards the just-sent ERROR frame on the peer. A clean FIN lets the
+        // client observe *why* it was dropped.
+        drain_peer(state, std::time::Duration::from_millis(50));
         return Err(ConnectionError::RateLimited);
     }
     match message {
@@ -367,6 +409,7 @@ fn handle_message(state: &mut ConnectionState, message: Message) -> Result<(), C
                     "key {code} outside capability set"
                 )));
             }
+            log::info!("key_down {code}");
             state.device.key_down(code).map_err(|e| {
                 let _ = send(state, &Message::Error(map_device_error(&e), e.to_string()));
                 ConnectionError::Device(e.to_string())
@@ -382,7 +425,39 @@ fn handle_message(state: &mut ConnectionState, message: Message) -> Result<(), C
                     "KEY_UP before CREATE_KEYBOARD".into(),
                 ));
             }
+            log::info!("key_up {code}");
             state.device.key_up(code).map_err(|e| {
+                let _ = send(state, &Message::Error(map_device_error(&e), e.to_string()));
+                ConnectionError::Device(e.to_string())
+            })
+        }
+        Message::KeyRepeat(code) => {
+            if !state.keyboard_created {
+                let _ = send(
+                    state,
+                    &Message::Error(
+                        ErrorCode::Malformed,
+                        "KEY_REPEAT before CREATE_KEYBOARD".into(),
+                    ),
+                );
+                return Err(ConnectionError::Handshake(
+                    "KEY_REPEAT before CREATE_KEYBOARD".into(),
+                ));
+            }
+            if !state.device.capability_codes().contains(&u32::from(code)) {
+                let _ = send(
+                    state,
+                    &Message::Error(
+                        ErrorCode::UnknownKey,
+                        format!("key {code} not in capability set"),
+                    ),
+                );
+                return Err(ConnectionError::Protocol(format!(
+                    "key {code} outside capability set"
+                )));
+            }
+            log::info!("key_repeat {code}");
+            state.device.key_repeat(code).map_err(|e| {
                 let _ = send(state, &Message::Error(map_device_error(&e), e.to_string()));
                 ConnectionError::Device(e.to_string())
             })
@@ -542,6 +617,78 @@ mod tests {
         h.send(&Message::KeyDown(0xFFFF));
         // The capability check rejects the key before it ever reaches the
         // device: a protocol violation, not a device error.
+        let err = h.pump().unwrap_err();
+        assert!(matches!(err, ConnectionError::Protocol(_)));
+        let replies = h.drain_replies();
+        assert!(matches!(
+            replies[0],
+            Message::Error(ErrorCode::UnknownKey, _)
+        ));
+    }
+
+    #[test]
+    fn key_repeat_of_held_key_emits_repeat() {
+        let mut h = Harness::new();
+        h.handshake();
+        h.drain_replies();
+
+        // Repeat is not a state transition: it must be routed to the device
+        // and pass through for a held key without touching the ledger.
+        h.send(&Message::KeyDown(30));
+        h.send(&Message::KeyRepeat(30));
+        h.pump().unwrap();
+
+        let device: &MockKeyboard = h
+            .state
+            .device
+            .as_any()
+            .downcast_ref::<MockKeyboard>()
+            .unwrap();
+        assert_eq!(device.events, vec![(true, 30), (true, 30)]);
+    }
+
+    #[test]
+    fn key_repeat_without_held_key_is_rejected() {
+        let mut h = Harness::new();
+        h.handshake();
+        h.drain_replies();
+
+        // Autorepeating a key that is not held is invalid state (the mock
+        // enforces it; uinput's ledger does the same on the device side).
+        h.send(&Message::KeyRepeat(30));
+        let err = h.pump().unwrap_err();
+        assert!(matches!(err, ConnectionError::Device(_)));
+        let replies = h.drain_replies();
+        assert!(matches!(
+            replies[0],
+            Message::Error(ErrorCode::InvalidKeyState, _)
+        ));
+    }
+
+    #[test]
+    fn key_repeat_before_create_is_rejected() {
+        let mut h = Harness::new();
+        h.send(&Message::Hello {
+            version: 1,
+            client_name: "x".into(),
+        });
+        h.send(&Message::KeyRepeat(30));
+        let err = h.pump().unwrap_err();
+        assert!(matches!(err, ConnectionError::Handshake(_)));
+        let replies = h.drain_replies();
+        assert!(matches!(
+            replies[0],
+            Message::Error(ErrorCode::Malformed, _)
+        ));
+    }
+
+    #[test]
+    fn key_repeat_unknown_code_is_rejected() {
+        let mut h = Harness::new();
+        h.handshake();
+        h.drain_replies();
+
+        h.send(&Message::KeyRepeat(0xFFFF));
         let err = h.pump().unwrap_err();
         assert!(matches!(err, ConnectionError::Protocol(_)));
         let replies = h.drain_replies();

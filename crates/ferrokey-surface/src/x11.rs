@@ -19,9 +19,11 @@
 //!
 //! (and optionally `override_redirect`, controlled by the caller).
 //!
-//! Rendering uses `XPutImage` with a 32-bit ZPixmap. Slint's
-//! `PremultipliedRgbaColor` is memory-ordered R,G,B,A; ZPixmap on
-//! little-endian servers is B,G,R,0 — so one R/B swap pass is needed.
+//! Rendering uses `XPutImage` with ZPixmap data in the exact wire layout the
+//! server expects: little-endian B,G,R for depth 24 (3 bytes/pixel, rows
+//! padded to 4 bytes) or B,G,R,X for depth 32. Slint's
+//! `PremultipliedRgbaColor` is memory-ordered R,G,B,A, so one R/B swap pass
+//! is needed (and the alpha byte is dropped at depth 24).
 
 use crate::{PointerButton, Surface, SurfaceBackend, SurfaceError, SurfaceEvent};
 use std::collections::VecDeque;
@@ -327,23 +329,45 @@ impl Surface for X11Surface {
         height: u32,
         stride: u32,
     ) -> Result<(), SurfaceError> {
-        // X11 ZPixmap at depth 24 is B,G,R,0 on little-endian servers; Slint
-        // gives R,G,B,A. Swap R and B into a scratch buffer.
-        let bytes = (height as usize)
-            .checked_mul(stride as usize)
+        // X11 ZPixmap wire layout (verified against Xorg 21.1): depth 24 and
+        // 32 both use 4 bytes per pixel (B,G,R,X on little-endian); depth 16
+        // uses 2. Rows are always 4-byte aligned, so `width * bpp` is exact.
+        let bpp: usize = match self.depth {
+            32 | 24 => 4,
+            16 => 2,
+            other => {
+                return Err(SurfaceError::Unsupported(format!(
+                    "unsupported window depth {other}"
+                )))
+            }
+        };
+        let row_bytes = (width as usize)
+            .checked_mul(bpp)
             .ok_or_else(|| SurfaceError::Unsupported("size overflow".into()))?;
-        if buffer.len() < bytes {
+        let bytes = (height as usize)
+            .checked_mul(row_bytes)
+            .ok_or_else(|| SurfaceError::Unsupported("size overflow".into()))?;
+        let src_stride = stride as usize;
+        let src_bytes = (height as usize)
+            .checked_mul(src_stride)
+            .ok_or_else(|| SurfaceError::Unsupported("size overflow".into()))?;
+        if buffer.len() < src_bytes {
             return Err(SurfaceError::Unsupported("buffer too small".into()));
         }
         let mut x11_buf = vec![0u8; bytes];
-        for (dst, src) in x11_buf
-            .chunks_exact_mut(4)
-            .zip(buffer[..bytes].chunks_exact(4))
-        {
-            dst[0] = src[2]; // B
-            dst[1] = src[1]; // G
-            dst[2] = src[0]; // R
-            dst[3] = 0; // X
+        for y in 0..height as usize {
+            let src_row = &buffer[y * src_stride..];
+            let dst_row = &mut x11_buf[y * row_bytes..];
+            for x in 0..width as usize {
+                let s = &src_row[x * 4..];
+                let d = x * bpp;
+                dst_row[d] = s[2]; // B
+                dst_row[d + 1] = s[1]; // G
+                dst_row[d + 2] = s[0]; // R
+                if bpp == 4 {
+                    dst_row[d + 3] = 0; // X
+                }
+            }
         }
         self.conn
             .put_image(

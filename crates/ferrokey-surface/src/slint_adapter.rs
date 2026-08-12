@@ -189,7 +189,7 @@ impl FerrokeyPlatform {
         }
         self.surface
             .borrow_mut()
-            .present(&bytes, width, height, width)
+            .present(&bytes, width, height, width * 4)
             .map_err(|e| PlatformError::Other(e.to_string()))?;
         Ok(())
     }

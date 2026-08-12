@@ -62,6 +62,15 @@ pub trait KeySink {
     fn key_down(&mut self, key: PhysicalKey) -> Result<(), SinkError>;
     fn key_up(&mut self, key: PhysicalKey) -> Result<(), SinkError>;
 
+    /// Autorepeat a held key (`EV_KEY` value=2). The kernel only passes
+    /// repeats through with value 2; a repeated value=1 for an already-held
+    /// key is filtered by `input_handle_event` and never reaches the
+    /// compositor. Defaults to [`KeySink::key_down`] so single-value sinks
+    /// (mocks, tests) keep working.
+    fn key_repeat(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
+        self.key_down(key)
+    }
+
     /// Press and release a key.
     fn tap(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
         self.key_down(key)?;
@@ -192,7 +201,9 @@ impl KeyboardDriver {
     pub fn tick_repeat(&mut self, now: Instant) -> Result<(), DriverError> {
         let due = self.repeat.tick(now);
         for key in due {
-            self.sink.key_down(key)?;
+            // Kernel autorepeat semantics: value=2 events, not repeated
+            // value=1 presses (the kernel filters those for held keys).
+            self.sink.key_repeat(key)?;
         }
         Ok(())
     }
@@ -230,19 +241,34 @@ mod tests {
     use std::cell::RefCell;
     use std::time::Duration;
 
+    /// The sink vocabulary, in kernel terms: press (value 1), repeat
+    /// (value 2), release (value 0). Recording repeats *distinctly* is what
+    /// pins the autorepeat contract — `tick_repeat` must route through
+    /// [`KeySink::key_repeat`], not a plain `key_down`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum SinkEvent {
+        Down(PhysicalKey),
+        Repeat(PhysicalKey),
+        Up(PhysicalKey),
+    }
+
     /// Recording sink: an in-memory transcript of emitted events.
     #[derive(Default)]
     pub struct Recorder {
-        pub events: RefCell<Vec<KeyEvent>>,
+        pub events: RefCell<Vec<SinkEvent>>,
     }
 
     impl KeySink for Recorder {
         fn key_down(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
-            self.events.borrow_mut().push(KeyEvent::Down(key));
+            self.events.borrow_mut().push(SinkEvent::Down(key));
             Ok(())
         }
         fn key_up(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
-            self.events.borrow_mut().push(KeyEvent::Up(key));
+            self.events.borrow_mut().push(SinkEvent::Up(key));
+            Ok(())
+        }
+        fn key_repeat(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
+            self.events.borrow_mut().push(SinkEvent::Repeat(key));
             Ok(())
         }
         fn release_all(&mut self) -> Result<(), SinkError> {
@@ -252,11 +278,15 @@ mod tests {
 
     impl KeySink for std::rc::Rc<Recorder> {
         fn key_down(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
-            self.events.borrow_mut().push(KeyEvent::Down(key));
+            self.events.borrow_mut().push(SinkEvent::Down(key));
             Ok(())
         }
         fn key_up(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
-            self.events.borrow_mut().push(KeyEvent::Up(key));
+            self.events.borrow_mut().push(SinkEvent::Up(key));
+            Ok(())
+        }
+        fn key_repeat(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
+            self.events.borrow_mut().push(SinkEvent::Repeat(key));
             Ok(())
         }
         fn release_all(&mut self) -> Result<(), SinkError> {
@@ -289,7 +319,10 @@ mod tests {
         assert!(!d.state().is_depressed(PhysicalKey::A));
         assert_eq!(
             events,
-            vec![KeyEvent::Down(PhysicalKey::A), KeyEvent::Up(PhysicalKey::A)]
+            vec![
+                SinkEvent::Down(PhysicalKey::A),
+                SinkEvent::Up(PhysicalKey::A)
+            ]
         );
     }
 
@@ -301,14 +334,15 @@ mod tests {
         let now = Instant::now();
         d.handle_action(KeyAction::Down, VirtualKey::Physical(PhysicalKey::A), now)
             .unwrap();
-        // Repeat fires after the delay.
+        // Repeat fires after the delay — as an autorepeat (value=2) event,
+        // not a second plain press.
         d.tick_repeat(now + Duration::from_millis(500)).unwrap();
         let events = recorder.events.borrow().clone();
         assert_eq!(
             events,
             vec![
-                KeyEvent::Down(PhysicalKey::A),
-                KeyEvent::Down(PhysicalKey::A), // repeat
+                SinkEvent::Down(PhysicalKey::A),
+                SinkEvent::Repeat(PhysicalKey::A),
             ]
         );
         // Pointer up stops it.
@@ -323,9 +357,9 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                KeyEvent::Down(PhysicalKey::A),
-                KeyEvent::Down(PhysicalKey::A),
-                KeyEvent::Up(PhysicalKey::A),
+                SinkEvent::Down(PhysicalKey::A),
+                SinkEvent::Repeat(PhysicalKey::A),
+                SinkEvent::Up(PhysicalKey::A),
             ]
         );
     }
@@ -366,12 +400,12 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                KeyEvent::Down(PhysicalKey::LeftShift),
-                KeyEvent::Up(PhysicalKey::LeftShift),
-                KeyEvent::Down(PhysicalKey::LeftShift), // injected
-                KeyEvent::Down(PhysicalKey::A),
-                KeyEvent::Up(PhysicalKey::A),
-                KeyEvent::Up(PhysicalKey::LeftShift), // injected released
+                SinkEvent::Down(PhysicalKey::LeftShift),
+                SinkEvent::Up(PhysicalKey::LeftShift),
+                SinkEvent::Down(PhysicalKey::LeftShift), // injected
+                SinkEvent::Down(PhysicalKey::A),
+                SinkEvent::Up(PhysicalKey::A),
+                SinkEvent::Up(PhysicalKey::LeftShift), // injected released
             ]
         );
         assert!(d.state().depressed().is_empty());
@@ -400,10 +434,10 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                KeyEvent::Down(PhysicalKey::LeftCtrl),
-                KeyEvent::Down(PhysicalKey::C),
-                KeyEvent::Up(PhysicalKey::C),
-                KeyEvent::Up(PhysicalKey::LeftCtrl),
+                SinkEvent::Down(PhysicalKey::LeftCtrl),
+                SinkEvent::Down(PhysicalKey::C),
+                SinkEvent::Up(PhysicalKey::C),
+                SinkEvent::Up(PhysicalKey::LeftCtrl),
             ]
         );
         assert!(d.state().depressed().is_empty());

@@ -25,9 +25,9 @@ esac
 start_ferrokeyd
 start_ferrokey
 
-# Focus the target window.
-sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool windowactivate \
-    "$(sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool search --name ferrokey-test-target | head -1)" 2>/dev/null || true
+# Focus the target window: activate it and click into its input field so the
+# editable widget deterministically holds keyboard focus on every toolkit.
+focus_target
 wait_focus 10
 
 focus_before
@@ -47,7 +47,7 @@ case "$TARGET" in
         fi
         ;;
     x11)
-        if grep -q '"event":"key","code":30,"down":true' "$EVENTS" 2>/dev/null; then
+        if grep -q '"event":"key","code":38,"down":true' "$EVENTS" 2>/dev/null; then
             ok "x11 target received KEY_A"
         else
             bad "x11 target did not receive KEY_A"
@@ -84,4 +84,4 @@ else
     bad "unbalanced key events: $UNBALANCED"
 fi
 
-finish_court PASS "target" "$TARGET"
+finish_court "target" "$TARGET"

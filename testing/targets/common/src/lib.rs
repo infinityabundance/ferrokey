@@ -12,6 +12,12 @@
 //! ```
 //!
 //! The court reads these lines and asserts on them.
+//!
+//! Every newly-connected client immediately receives a *state snapshot*
+//! (`Ready`, plus the current focus/text state). Courts start the recorder
+//! before the target and may connect at any point; a one-shot broadcast would
+//! race with early events (e.g. the first `FocusIn` arriving ~0.2s after
+//! map), so new clients must not miss state that already happened.
 
 use serde::Serialize;
 use std::io::Write;
@@ -35,10 +41,18 @@ pub enum TargetEvent {
     Ready,
 }
 
+/// The current state of a target, replayed to every new client.
+#[derive(Debug, Default)]
+struct CurrentState {
+    focused: Option<bool>,
+    text: Option<String>,
+}
+
 /// Broadcasts [`TargetEvent`]s to every connected client.
 pub struct Reporter {
     listener: Arc<UnixListener>,
     clients: Arc<Mutex<Vec<UnixStream>>>,
+    state: Arc<Mutex<CurrentState>>,
 }
 
 impl Reporter {
@@ -53,18 +67,44 @@ impl Reporter {
         Ok(Reporter {
             listener: Arc::new(listener),
             clients: Arc::new(Mutex::new(Vec::new())),
+            state: Arc::new(Mutex::new(CurrentState::default())),
         })
     }
 
-    /// Spawn the accept loop. Call once; the loop runs forever.
+    /// Spawn the accept loop. Call once; the loop runs forever. Every new
+    /// client immediately receives a state snapshot (the `Ready` marker plus
+    /// the current focus/text state), so courts that connect after startup
+    /// never miss events that already happened.
     pub fn spawn_accept_loop(&self) {
         let listener = self.listener.clone();
         let clients = self.clients.clone();
+        let state = self.state.clone();
         thread::spawn(move || {
             for stream in listener.incoming() {
                 match stream {
-                    Ok(stream) => {
+                    Ok(mut stream) => {
                         let _ = stream.set_nonblocking(true);
+                        // Snapshot for the new client: Ready first, then the
+                        // current focus/text state if any is known.
+                        let mut buf = serde_json::to_string(&TargetEvent::Ready)
+                            .unwrap_or_else(|_| "{}".into())
+                            .into_bytes();
+                        buf.push(b'\n');
+                        let _ = stream.write_all(&buf);
+                        if let Ok(cur) = state.lock() {
+                            if let Some(focused) = cur.focused {
+                                let line = serde_json::to_string(&TargetEvent::Focus { focused })
+                                    .unwrap_or_default();
+                                let _ = stream.write_all(format!("{line}\n").as_bytes());
+                            }
+                            if let Some(text) = &cur.text {
+                                let line = serde_json::to_string(&TargetEvent::Text {
+                                    text: text.clone(),
+                                })
+                                .unwrap_or_default();
+                                let _ = stream.write_all(format!("{line}\n").as_bytes());
+                            }
+                        }
                         clients.lock().unwrap().push(stream);
                     }
                     Err(e) => log::warn!("target reporter accept failed: {e}"),
@@ -75,6 +115,20 @@ impl Reporter {
 
     /// Broadcast an event to all connected clients.
     pub fn report(&self, event: TargetEvent) {
+        // Track the current state so late-connecting clients get a snapshot.
+        match &event {
+            TargetEvent::Focus { focused } => {
+                if let Ok(mut cur) = self.state.lock() {
+                    cur.focused = Some(*focused);
+                }
+            }
+            TargetEvent::Text { text } => {
+                if let Ok(mut cur) = self.state.lock() {
+                    cur.text = Some(text.clone());
+                }
+            }
+            _ => {}
+        }
         let line = match serde_json::to_string(&event) {
             Ok(line) => line,
             Err(e) => {

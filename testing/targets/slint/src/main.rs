@@ -2,6 +2,16 @@
 //!
 //! Built with Slint's normal winit backend — this is a *regular* application
 //! that the OSK must not steal focus from.
+//!
+//! Slint 1.17 builtin API notes (verified against i-slint-compiler 1.17.1
+//! builtins.slint):
+//!   * `TextInput` has `has-focus` (out property), `edited` (0-arg callback),
+//!     and `key_pressed(event: KeyEvent) -> EventResult`. There is no
+//!     `placeholder-text`/`background`/`focus-changed` on the builtin, so the
+//!     markup below sticks to the properties that exist.
+//!   * Reacting to a property change uses `changed <property> => { … }`.
+//!   * `key_pressed` returning `reject` lets `TextInput` process the key
+//!     (insert the character), which then fires `edited` — our text oracle.
 
 use ferrokey_test_common::{Reporter, TargetEvent};
 use slint::{ComponentHandle, SharedString};
@@ -20,19 +30,17 @@ slint::slint! {
 
         VerticalLayout {
             padding: 16px;
+            spacing: 8px;
             Text {
                 text: "ferrokey test target (slint)";
                 color: white;
                 font-size: 16px;
             }
             TextInput {
-                placeholder-text: "type here";
                 color: white;
-                background: #304050;
-                border-radius: 4px;
-                padding: 8px;
-                focus-changed(f) => { root.focus-changed(f); }
-                edited(t) => { root.text-changed(t); }
+                font-size: 16px;
+                changed has-focus => { root.focus-changed(self.has-focus); }
+                edited => { root.text-changed(self.text); }
                 key-pressed(event) => {
                     root.key-injected(event.text);
                     reject

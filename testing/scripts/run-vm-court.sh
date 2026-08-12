@@ -38,37 +38,44 @@ fi
 PAYLOAD_DIR="${PAYLOAD_DIR:-$RUN_DIR/payload}"
 rm -rf "$PAYLOAD_DIR"
 mkdir -p "$PAYLOAD_DIR"/{bin,courts}
-cp -r "$REPO_ROOT/testing/courts/$COURT" "$PAYLOAD_DIR/courts/"
+# The whole courts tree (shared lib.sh + helpers + every court) is shipped so
+# each court script finds its helpers at a stable relative path.
+cp -r "$REPO_ROOT/testing/courts/." "$PAYLOAD_DIR/courts/"
 cp -r "$REPO_ROOT/testing/vm/provision" "$PAYLOAD_DIR/" 2>/dev/null || true
 cp -r "$REPO_ROOT/testing/fixtures" "$PAYLOAD_DIR/" 2>/dev/null || true
 
 echo "==> building product binaries (builder image)"
 "$DOCKER" run --rm \
+    --network "${COURT_NETWORK:-bridge}" \
     -v "$REPO_ROOT:/repo:ro" \
     -v "$PAYLOAD_DIR/bin:/out" \
     -v ferrokey-payload-cargo:/usr/local/cargo \
     -v ferrokey-payload-target:/target \
     -e CARGO_HOME=/usr/local/cargo \
     -e CARGO_TARGET_DIR=/target \
+    -e CARGO_INCREMENTAL=0 \
     -e DISPLAY= -e WAYLAND_DISPLAY= -e XDG_RUNTIME_DIR=/tmp \
     -e DBUS_SESSION_BUS_ADDRESS= -e XAUTHORITY= -e SSH_AUTH_SOCK= \
-    --network bridge \
     "$BUILDER_IMAGE" \
     bash -c 'cd /repo && cargo build --release -p ferrokey -p ferrokeyd && cp /target/release/ferrokey /target/release/ferrokeyd /out/'
 
 echo "==> building court targets (targets image)"
 "$DOCKER" run --rm \
+    --network "${COURT_NETWORK:-bridge}" \
     -v "$REPO_ROOT/testing/targets:/targets:ro" \
     -v "$PAYLOAD_DIR/bin:/out" \
     -v ferrokey-payload-targets:/target \
     -e CARGO_TARGET_DIR=/target \
+    -e CARGO_INCREMENTAL=0 \
     -e DISPLAY= -e WAYLAND_DISPLAY= -e XDG_RUNTIME_DIR=/tmp \
     -e DBUS_SESSION_BUS_ADDRESS= -e XAUTHORITY= -e SSH_AUTH_SOCK= \
-    --network bridge \
     "$TARGETS_IMAGE" \
     bash -c '
         set -e
-        cd /targets
+        # The workspace mount is read-only; copy to a writable location so
+        # Cargo can write its lockfile.
+        rm -rf /work && cp -a /targets /work
+        cd /work
         cargo build --release \
             -p ferrokey-test-common -p ferrokey-test-target-x11 \
             -p ferrokey-test-target-wayland -p ferrokey-test-target-slint \
@@ -98,14 +105,14 @@ fi
 
 "$DOCKER" run --rm \
     "${KVM_ARGS[@]}" \
+    --network "${COURT_NETWORK:-bridge}" \
     -v "$REPO_ROOT:/repo:ro" \
     -v ferrokey-vm-state:/court/state \
     -v "$PAYLOAD_DIR:/court/state/payload:ro" \
     -e COURT="$COURT" \
     -e PROFILE="$PROFILE" \
     -e DISTRO="$DISTRO" \
-    --network bridge \
     "$ORACLE_IMAGE" \
-    bash /repo/testing/vm/qemu/run-court-inner.sh "$COURT" "$PROFILE"
+    /repo/testing/vm/qemu/run-court-inner.sh "$COURT" "$PROFILE"
 
 echo "==> VM court $COURT finished; evidence in $RUN_DIR"

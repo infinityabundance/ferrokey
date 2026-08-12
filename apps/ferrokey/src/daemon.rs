@@ -157,6 +157,10 @@ impl KeySink for DaemonLink {
         self.send_message(Message::KeyUp(key.linux_code() as u16))
     }
 
+    fn key_repeat(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
+        self.send_message(Message::KeyRepeat(key.linux_code() as u16))
+    }
+
     fn release_all(&mut self) -> Result<(), SinkError> {
         self.send_message(Message::ReleaseAll)
     }
@@ -173,6 +177,10 @@ impl KeySink for DaemonLinkSink {
 
     fn key_up(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
         self.0.borrow_mut().key_up(key)
+    }
+
+    fn key_repeat(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
+        self.0.borrow_mut().key_repeat(key)
     }
 
     fn release_all(&mut self) -> Result<(), SinkError> {

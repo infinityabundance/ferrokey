@@ -116,6 +116,11 @@ impl KeySink for Client {
             .map_err(|e| SinkError(e.to_string()))
     }
 
+    fn key_repeat(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
+        self.send(&Message::KeyRepeat(key.linux_code() as u16))
+            .map_err(|e| SinkError(e.to_string()))
+    }
+
     fn release_all(&mut self) -> Result<(), SinkError> {
         self.send(&Message::ReleaseAll)
             .map_err(|e| SinkError(e.to_string()))

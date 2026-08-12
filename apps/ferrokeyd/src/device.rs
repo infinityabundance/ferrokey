@@ -13,6 +13,8 @@ pub trait KeyboardDevice: std::any::Any {
     fn create(&mut self) -> Result<(), DeviceError>;
     fn key_down(&mut self, code: u16) -> Result<(), DeviceError>;
     fn key_up(&mut self, code: u16) -> Result<(), DeviceError>;
+    /// Autorepeat a held key (`EV_KEY` value=2; not a state transition).
+    fn key_repeat(&mut self, code: u16) -> Result<(), DeviceError>;
     /// Release every held key (disconnect / crash recovery).
     fn release_all(&mut self) -> Result<(), DeviceError>;
     /// The linux key codes this device supports.
@@ -53,7 +55,6 @@ impl UinputKeyboard {
             options: DeviceOptions {
                 name: device_name.to_string(),
                 max_held_keys,
-                ..Default::default()
             },
             capabilities: ferrokey_uinput::capability_codes(),
         }
@@ -94,10 +95,23 @@ impl KeyboardDevice for UinputKeyboard {
             .map_err(|e| classify_sink_error(code, e.to_string()))
     }
 
+    fn key_repeat(&mut self, code: u16) -> Result<(), DeviceError> {
+        let key =
+            PhysicalKey::from_linux_code(u32::from(code)).ok_or(DeviceError::UnknownKey(code))?;
+        let dev = self
+            .inner
+            .as_mut()
+            .ok_or_else(|| DeviceError::Create("device not created".into()))?;
+        dev.key_repeat(key)
+            .map_err(|e| classify_sink_error(code, e.to_string()))
+    }
+
     fn release_all(&mut self) -> Result<(), DeviceError> {
         if let Some(dev) = self.inner.as_mut() {
+            log::info!("release_all: releasing held keys");
             dev.release_all()
                 .map_err(|e| DeviceError::Io(e.to_string()))?;
+            log::info!("release_all: done");
         }
         Ok(())
     }
@@ -163,6 +177,15 @@ impl KeyboardDevice for MockKeyboard {
             return Err(DeviceError::KeyUpWithoutDown(code));
         }
         self.events.push((false, code));
+        Ok(())
+    }
+
+    fn key_repeat(&mut self, code: u16) -> Result<(), DeviceError> {
+        // Autorepeat is not a state transition: require the key to be held.
+        if !self.is_held(code) {
+            return Err(DeviceError::KeyUpWithoutDown(code));
+        }
+        self.events.push((true, code));
         Ok(())
     }
 

@@ -19,8 +19,7 @@ sleep 0.5
 start_ferrokeyd
 start_ferrokey
 
-sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool windowactivate \
-    "$(sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool search --name ferrokey-test-target | head -1)" 2>/dev/null || true
+focus_target
 wait_focus 10
 
 # In the de layout, physical Y is labelled 'z' and physical Z is 'y'.
@@ -47,4 +46,4 @@ else
     bad "OSK window missing"
 fi
 
-finish_court PASS "court" "layouts"
+finish_court "court" "layouts"

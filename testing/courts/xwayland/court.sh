@@ -4,9 +4,9 @@
 set -euo pipefail
 source "$(dirname "$0")/../lib.sh"
 
-mkdir -p /run/user/1000
-chown court:court /run/user/1000
-chmod 700 /run/user/1000
+sudo mkdir -p /run/user/1000
+sudo chown court:court /run/user/1000
+sudo chmod 700 /run/user/1000
 
 start_xorg
 
@@ -56,7 +56,7 @@ else
 fi
 
 # WM_HINTS.input=False over XWayland.
-WMHINTS=$(sudo -u "$COURT_USER" env DISPLAY="$DISPLAY_XW" xprop -name "Ferrokey" WM_HINTS 2>/dev/null | grep -o "input state is [A-Za-z]*" || echo "")
+WMHINTS=$(sudo -u "$COURT_USER" env DISPLAY="$DISPLAY_XW" xprop -name "Ferrokey Virtual Keyboard" WM_HINTS 2>/dev/null | grep -o "input state is [A-Za-z]*" || echo "")
 if echo "$WMHINTS" | grep -q "NO"; then
     ok "WM_HINTS.input = False over XWayland"
 else
@@ -82,4 +82,4 @@ else
 fi
 focus_after
 
-finish_court PASS "court" "xwayland"
+finish_court "court" "xwayland"

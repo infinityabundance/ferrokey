@@ -19,8 +19,7 @@ for TARGET in gtk qt slint x11; do
     esac
     start_ferrokey
 
-    sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool windowactivate \
-        "$(sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool search --name ferrokey-test-target | head -1)" 2>/dev/null || true
+    focus_target
     wait_focus 10
 
     focus_before
@@ -39,8 +38,8 @@ for TARGET in gtk qt slint x11; do
             fi
             ;;
         x11)
-            if grep -q '"code":35,"down":true' "$EVENTS" 2>/dev/null \
-                && grep -q '"code":23,"down":true' "$EVENTS" 2>/dev/null; then
+            if grep -q '"code":43,"down":true' "$EVENTS" 2>/dev/null \
+                && grep -q '"code":31,"down":true' "$EVENTS" 2>/dev/null; then
                 ok "x11: received KEY_H + KEY_I"
             else
                 bad "x11: missing key events"
@@ -56,4 +55,4 @@ for TARGET in gtk qt slint x11; do
     : > "$EVENTS"
 done
 
-finish_court PASS "court" "applications"
+finish_court "court" "applications"

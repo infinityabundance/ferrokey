@@ -4,7 +4,9 @@
 # ambiguous because X11 has its own autorepeat; the device is the oracle.
 #
 #   pointer down → immediate key-down (value 1)
-#   after repeat delay → repeats begin (further value-1 events)
+#   after repeat delay → repeats begin (value 2 — kernel autorepeat semantics;
+#   the input core filters repeated value=1 events for held keys, so the
+#   repeat engine emits EV_KEY value=2, which passes through untouched)
 #   pointer up → repeats stop, key-up emitted (value 0)
 set -euo pipefail
 source "$(dirname "$0")/../lib.sh"
@@ -23,7 +25,9 @@ fi
 echo "Ferrokey device node: /dev/input/$NODE"
 
 DEVLOG="$OUT/device-events.log"
-sudo -u root timeout 10 evtest --grab "/dev/input/$NODE" > "$DEVLOG" 2>&1 &
+# stdbuf -oL: line-buffer evtest's output so nothing is lost when it is
+# killed at the end of the window.
+sudo -u root timeout 10 stdbuf -oL evtest --grab "/dev/input/$NODE" > "$DEVLOG" 2>&1 &
 EVTEST_PID=$!
 sleep 1
 
@@ -35,12 +39,12 @@ sleep 1.2
 sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool mouseup 1
 sleep 0.6
 
-A_DOWNS=$(grep -c "code 30 (KEY_A), value 1" "$DEVLOG" || true)
+A_PRESSES=$(grep -cE "code 30 \(KEY_A\), value [12]" "$DEVLOG" || true)
 A_UPS=$(grep -c "code 30 (KEY_A), value 0" "$DEVLOG" || true)
-if [ "$A_DOWNS" -ge 8 ]; then
-    ok "repeat: device saw >= 8 KEY_A press events while held (got $A_DOWNS)"
+if [ "$A_PRESSES" -ge 8 ]; then
+    ok "repeat: device saw >= 8 KEY_A press events while held (got $A_PRESSES)"
 else
-    bad "repeat: expected >= 8 KEY_A presses, got $A_DOWNS"
+    bad "repeat: expected >= 8 KEY_A presses, got $A_PRESSES"
 fi
 if [ "$A_UPS" -ge 1 ]; then
     ok "repeat: final KEY_A release emitted"
@@ -55,11 +59,11 @@ sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool mousemove "$X" "$Y" mousedo
 sleep 1.0
 sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool mouseup 1
 sleep 0.6
-B_DOWNS=$(grep -c "code 14 (KEY_BACKSPACE), value 1" "$DEVLOG" || true)
-if [ "$B_DOWNS" -ge 5 ]; then
-    ok "repeat: backspace repeats while held (got $B_DOWNS)"
+B_PRESSES=$(grep -cE "code 14 \(KEY_BACKSPACE\), value [12]" "$DEVLOG" || true)
+if [ "$B_PRESSES" -ge 5 ]; then
+    ok "repeat: backspace repeats while held (got $B_PRESSES)"
 else
-    bad "repeat: backspace did not repeat (got $B_DOWNS)"
+    bad "repeat: backspace did not repeat (got $B_PRESSES)"
 fi
 
 # ── REPEAT.003: modifiers must NOT repeat ─────────────────────────────────
@@ -69,12 +73,12 @@ sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool mousemove "$X" "$Y" mousedo
 sleep 1.0
 sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool mouseup 1
 sleep 0.6
-S_DOWNS=$(grep -c "code 42 (KEY_LEFTSHIFT), value 1" "$DEVLOG" || true)
-if [ "$S_DOWNS" -eq 1 ]; then
-    ok "repeat: modifier does not auto-repeat (got $S_DOWNS press)"
+S_PRESSES=$(grep -cE "code 42 \(KEY_LEFTSHIFT\), value [12]" "$DEVLOG" || true)
+if [ "$S_PRESSES" -eq 1 ]; then
+    ok "repeat: modifier does not auto-repeat (got $S_PRESSES press)"
 else
-    bad "repeat: modifier repeated ($S_DOWNS presses)"
+    bad "repeat: modifier repeated ($S_PRESSES presses)"
 fi
 
 kill "$EVTEST_PID" 2>/dev/null || true
-finish_court PASS "court" "repeat"
+finish_court "court" "repeat"

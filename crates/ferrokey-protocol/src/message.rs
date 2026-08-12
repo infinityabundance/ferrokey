@@ -37,6 +37,10 @@ pub enum Opcode {
     KeyDown = 0x10,
     KeyUp = 0x11,
     ReleaseAll = 0x12,
+    /// Autorepeat press (`EV_KEY` value=2): the kernel only passes repeats
+    /// through with value 2 — a repeated value=1 for an already-held key is
+    /// filtered by `input_handle_event` and never reaches the compositor.
+    KeyRepeat = 0x13,
     Ping = 0x20,
     // Server → client
     Pong = 0x21,
@@ -52,6 +56,7 @@ impl Opcode {
             0x10 => Some(Opcode::KeyDown),
             0x11 => Some(Opcode::KeyUp),
             0x12 => Some(Opcode::ReleaseAll),
+            0x13 => Some(Opcode::KeyRepeat),
             0x20 => Some(Opcode::Ping),
             0x21 => Some(Opcode::Pong),
             0x80 => Some(Opcode::Ok),
@@ -72,6 +77,8 @@ pub enum Message {
     KeyDown(u16),
     /// Release a key (linux input code).
     KeyUp(u16),
+    /// Autorepeat a held key (linux input code; `EV_KEY` value=2).
+    KeyRepeat(u16),
     /// Release every held key.
     ReleaseAll,
     /// Heartbeat; the server must reply [`Message::Pong`] with the same nonce.
