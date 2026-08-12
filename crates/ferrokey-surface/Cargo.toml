@@ -5,12 +5,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-ferrokey-core = { path = "../ferrokey-core" }
+ferrokey-core.workspace = true
 wayland-client.workspace = true
 wayland-protocols.workspace = true
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }

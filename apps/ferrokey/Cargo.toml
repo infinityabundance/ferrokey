@@ -1,20 +1,23 @@
 [package]
-name = "ferrokey"
+name = "ferrokey-ui"
 description = "Ferrokey: the on-screen keyboard that preserves target focus via kernel-level input injection"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
+# The UI is an application, not a library: never published to crates.io.
+publish = false
 
 [[bin]]
 name = "ferrokey"
 path = "src/main.rs"
 
 [dependencies]
-ferrokey-core = { path = "../../crates/ferrokey-core" }
-ferrokey-protocol = { path = "../../crates/ferrokey-protocol" }
-ferrokey-layouts = { path = "../../crates/ferrokey-layouts" }
-ferrokey-surface = { path = "../../crates/ferrokey-surface" }
+ferrokey-core.workspace = true
+ferrokey-protocol.workspace = true
+ferrokey-layouts.workspace = true
+ferrokey-surface.workspace = true
 slint.workspace = true
 log.workspace = true
 nix.workspace = true

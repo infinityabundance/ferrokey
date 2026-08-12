@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
+# The daemon is an application, not a library: never published to crates.io.
+publish = false
 
 [[bin]]
 name = "ferrokeyd"
@@ -14,9 +17,9 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-ferrokey-core = { path = "../../crates/ferrokey-core" }
-ferrokey-uinput = { path = "../../crates/ferrokey-uinput" }
-ferrokey-protocol = { path = "../../crates/ferrokey-protocol" }
+ferrokey-core.workspace = true
+ferrokey-uinput.workspace = true
+ferrokey-protocol.workspace = true
 log.workspace = true
 nix.workspace = true
 serde.workspace = true
