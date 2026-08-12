@@ -293,7 +293,7 @@ mod tests {
     fn round_trips_all_messages() {
         round_trip(&Message::Hello {
             version: 1,
-            client_name: "ferrokey-ui".into(),
+            client_name: "ferrokey".into(),
         });
         round_trip(&Message::CreateKeyboard);
         round_trip(&Message::KeyDown(30));

@@ -1,6 +1,6 @@
 //! # ferrokey-protocol
 //!
-//! The Ferrokey wire protocol between `ferrokey-ui` and `ferrokeyd`:
+//! The Ferrokey wire protocol between `ferrokey` (UI) and `ferrokeyd`:
 //! a tiny, length-prefixed, binary protocol (no JSON) with a hostile-input
 //! resistant streaming decoder.
 //!

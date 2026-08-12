@@ -1,13 +1,12 @@
 [package]
 name = "ferrokeyd"
 description = "Ferrokey daemon: privileged broker owning /dev/uinput, authenticated over a Unix socket"
-version.workspace = true
+version = "0.1.2"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-# The daemon is an application, not a library: never published to crates.io.
-publish = false
+readme = "README.md"
 
 [[bin]]
 name = "ferrokeyd"

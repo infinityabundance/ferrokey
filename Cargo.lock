@@ -1087,13 +1087,21 @@ dependencies = [
 
 [[package]]
 name = "ferrokey"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
+ "anyhow",
  "ferrokey-core",
  "ferrokey-layouts",
  "ferrokey-protocol",
  "ferrokey-surface",
  "ferrokey-uinput",
+ "log",
+ "nix 0.31.3",
+ "serde",
+ "serde_yaml",
+ "slint",
+ "slint-build",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -1144,24 +1152,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ferrokey-ui"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "ferrokey-core",
- "ferrokey-layouts",
- "ferrokey-protocol",
- "ferrokey-surface",
- "log",
- "nix 0.31.3",
- "serde",
- "serde_yaml",
- "slint",
- "slint-build",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "ferrokey-uinput"
 version = "0.1.1"
 dependencies = [
@@ -1174,7 +1164,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokeyd"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "ferrokey-core",

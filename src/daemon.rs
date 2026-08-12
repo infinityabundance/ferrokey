@@ -73,7 +73,7 @@ impl DaemonLink {
                 let handshake = client
                     .send(&Message::Hello {
                         version: PROTOCOL_VERSION,
-                        client_name: format!("ferrokey-ui/{}", env!("CARGO_PKG_VERSION")),
+                        client_name: format!("ferrokey/{}", env!("CARGO_PKG_VERSION")),
                     })
                     .and_then(|()| client.send(&Message::CreateKeyboard));
                 match handshake {

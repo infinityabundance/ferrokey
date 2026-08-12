@@ -60,15 +60,16 @@ flaky, race-prone keyboard state. Ferrokey sidesteps the entire problem:
 
 | package | crates.io | description |
 |---|---|---|
-| `ferrokey` | [crates.io](https://crates.io/crates/ferrokey) | umbrella: re-exports the five crates |
+| `ferrokey` | [crates.io](https://crates.io/crates/ferrokey) | umbrella crate **and** the `ferrokey` UI binary (the main app) |
 | `ferrokey-core` | [crates.io](https://crates.io/crates/ferrokey-core) | keyboard state machine, repeat, layouts, actions |
 | `ferrokey-protocol` | [crates.io](https://crates.io/crates/ferrokey-protocol) | binary wire protocol UI ↔ daemon |
 | `ferrokey-uinput` | [crates.io](https://crates.io/crates/ferrokey-uinput) | `/dev/uinput` virtual keyboard + held-key ledger |
 | `ferrokey-layouts` | [crates.io](https://crates.io/crates/ferrokey-layouts) | layout data files and loaders |
 | `ferrokey-surface` | [crates.io](https://crates.io/crates/ferrokey-surface) | Wayland/X11 surfaces + Slint platform adapter |
 
-Applications `ferrokey` (UI) and `ferrokeyd` (daemon) live under `apps/` and
-are not published.
+The `ferrokey` crate is the main application: its `ferrokey` binary is the
+UI, and its library is the umbrella re-exporting the five crates. The
+daemon (`ferrokeyd`) lives under `apps/`.
 
 ## Building
 

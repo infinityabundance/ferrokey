@@ -1,6 +1,6 @@
 [package]
 name = "ferrokey-protocol"
-description = "Ferrokey wire protocol: length-prefixed binary messages between ferrokey-ui and ferrokeyd"
+description = "Ferrokey wire protocol: length-prefixed binary messages between ferrokey (UI) and ferrokeyd"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
