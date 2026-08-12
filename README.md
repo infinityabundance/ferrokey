@@ -69,7 +69,7 @@ flaky, race-prone keyboard state. Ferrokey sidesteps the entire problem:
 
 The `ferrokey` crate is the main application: its `ferrokey` binary is the
 UI, and its library is the umbrella re-exporting the five crates. The
-daemon (`ferrokeyd`) lives under `apps/`.
+daemon (`ferrokeyd`) lives under `crates/`.
 
 ## Building
 

@@ -11,7 +11,7 @@ readme = "README.md"
 # The library crates it re-exports are published under their own names, so
 # their sources (and the apps/courts that consume them) stay out of the
 # tarball.
-exclude = ["/apps", "/crates", "/testing", "/target", "/.github"]
+exclude = ["/crates", "/testing", "/target", "/.github"]
 
 [dependencies]
 ferrokey-core.workspace = true
@@ -70,7 +70,7 @@ members = [
     "crates/ferrokey-uinput",
     "crates/ferrokey-layouts",
     "crates/ferrokey-surface",
-    "apps/ferrokeyd",
+    "crates/ferrokeyd",
 ]
 
 [workspace.package]
