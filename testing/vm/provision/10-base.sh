@@ -18,6 +18,17 @@ stat -c '%A %U:%G %n' /dev/uinput > /etc/ferrokey-uinput-perms.txt 2>/dev/null |
 echo 'court ALL=(ALL) NOPASSWD: /usr/bin/evtest, /usr/bin/udevadm' > /etc/sudoers.d/court-tools
 chmod 440 /etc/sudoers.d/court-tools
 
+# ── Phase 3: the dedicated unprivileged broker identity (§3) ──────────────
+# The runtime broker (`ferrokeyd serve`) runs as this user with zero
+# capabilities; it is never root. The socket lives in a runtime directory
+# owned by this user (the daemon refuses group/world-writable parents, §26).
+if ! id -u ferrokeyd >/dev/null 2>&1; then
+    useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin ferrokeyd
+fi
+mkdir -p /run/ferrokeyd
+chown ferrokeyd:ferrokeyd /run/ferrokeyd
+chmod 0755 /run/ferrokeyd
+
 # Mark provisioning complete.
 touch /var/lib/ferrokey-provisioned
 echo "base provisioning complete"

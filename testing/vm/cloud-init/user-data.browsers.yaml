@@ -1,0 +1,103 @@
+#cloud-config
+# Ferrokey application-matrix VM image: the X11 court stack plus the real
+# application targets (Firefox, Chromium, Electron, SDL). Used ONLY to bake
+# the cached `debian-12-browsers` base image (rule 5: immutable base images);
+# per-court overlays never reinstall browsers.
+#
+# The package list is the FULL UNION of the browsers profile and the x11
+# profile (which every court seeds with): a court boots over this image and
+# must find everything already installed — no network at court-execution
+# time (rule 30). Without wmctrl baked in, each browser court would
+# apt-install it over a flaky DNS link and intermittently fail.
+ssh_pwauth: false
+disable_root: false
+
+users:
+  - name: court
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: [sudo]
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "__COURT_SSH_PUBKEY__"
+
+package_update: true
+packages:
+  # The standard X11 court stack (identical to user-data.x11.yaml).
+  - xserver-xorg-video-dummy
+  - xserver-xorg-core
+  - xinit
+  - x11-utils
+  - xdotool
+  - x11-xserver-utils
+  - xterm
+  - fonts-dejavu-core
+  - evtest
+  - libinput-tools
+  - procps
+  - curl
+  - jq
+  - libgtk-3-0
+  - libqt6widgets6
+  - openbox
+  - strace
+  - libxkbcommon0
+  - xkb-data
+  - xserver-xorg-input-libinput
+  - libsdl2-2.0-0
+  - xclip
+  # wmctrl: EWMH window control — the browser courts unmaximize + reposition
+  # the target window below the OSK (xdotool's windowmove is ignored on
+  # maximized windows).
+  - wmctrl
+  # TUI stack (identical to user-data.x11.yaml): the TERM.TUI court's
+  # real terminal applications as the PTY child.
+  - vim-tiny
+  - less
+  - htop
+  - tmux
+  # Real application targets (rule 50: test applications, not toolkit theory).
+  - firefox-esr
+  - chromium
+  # Electron's runtime deps beyond Chromium's.
+  - libxss1
+  - unzip
+
+write_files:
+  # Headless courts: let any local user start the dummy-driver X server
+  # (the Xorg.wrap console-user check would otherwise refuse SSH-only users).
+  - path: /etc/X11/Xwrapper.config
+    content: |
+      allowed_users=anybody
+      needs_root_rights=yes
+
+  - path: /etc/X11/xorg.conf.d/99-ferrokey-dummy.conf
+    content: |
+      Section "Device"
+          Identifier  "DummyDevice"
+          Driver      "dummy"
+          VideoRam    65536
+      EndSection
+
+      Section "Monitor"
+          Identifier  "DummyMonitor"
+          HorizSync   5.0 - 1000.0
+          VertRefresh 5.0 - 1000.0
+          Modeline "1280x720" 74.48 1280 1336 1472 1664 720 721 724 746
+      EndSection
+
+      Section "Screen"
+          Identifier  "DummyScreen"
+          Device      "DummyDevice"
+          Monitor     "DummyMonitor"
+          DefaultDepth 24
+          SubSection "Display"
+              Depth 24
+              Modes "1280x720"
+          EndSubSection
+      EndSection
+
+runcmd:
+  - [ systemctl, disable, --now, systemd-resolved ]
+  - [ bash, /provision/10-base.sh ]
+  - [ bash, /provision/20-apps.sh ]

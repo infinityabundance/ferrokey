@@ -61,7 +61,7 @@ else
 fi
 
 # Daemon must still accept connections (daemon restart court, rule 27).
-if python3 "$PAYLOAD/courts/fk-client.py" --socket /tmp/ferrokeyd.sock handshake release-all; then
+if python3 "$PAYLOAD/courts/fk-client.py" --socket /run/ferrokeyd/ferrokeyd.sock handshake release-all; then
     ok "daemon alive and functional after UI crashes"
 else
     bad "daemon not functional after UI crashes"

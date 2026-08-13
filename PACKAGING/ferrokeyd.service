@@ -1,0 +1,103 @@
+# Ferrokey constrained broker — systemd unit (Phase 3, §38–§40).
+#
+# INSTALL
+#   Install the ferrokeyd binary at /usr/bin/ferrokeyd and place the
+#   production config at /etc/ferrokey/ferrokeyd.yaml (root-owned, 0644, §45).
+#   Then:
+#     install -m 0644 PACKAGING/ferrokeyd.service /etc/systemd/system/ferrokeyd.service
+#     systemctl daemon-reload
+#     systemctl enable --now ferrokeyd
+#
+# SECURITY MODEL
+#   `ferrokeyd start` is a tiny supervisor: it parses the root-owned config,
+#   spawns the bootstrap (`ferrokeyd init`) which opens /dev/uinput, configures
+#   exactly the immutable capability set, creates ONE virtual keyboard and
+#   transfers the fd, then spawns the runtime broker (`ferrokeyd serve`) which
+#   drops to the dedicated unprivileged `ferrokeyd` identity with zero
+#   capabilities, NO_NEW_PRIVS and the in-process seccomp allowlist before
+#   accepting any client (§3, §15, §41).
+#
+#   The hardening below is defense in depth for the whole process tree,
+#   including the brief root supervisor/bootstrap phase. The authoritative
+#   runtime freeze is the in-process seccomp allowlist installed by `serve`;
+#   the unit's SystemCallFilter must therefore remain *at least* as permissive
+#   as the supervisor/bootstrap need (open/openat/ioctl for /dev/uinput setup,
+#   fork/exec/wait4, setuid/setgid/setgroups for the identity drop).
+
+[Unit]
+Description=Ferrokey virtual keyboard broker (constrained)
+Documentation=https://github.com/infinityabundance/ferrokey
+After=local-fs.target
+ConditionPathExists=/etc/ferrokey/ferrokeyd.yaml
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ferrokeyd start --config /etc/ferrokey/ferrokeyd.yaml
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+
+# ── Identity and privileges (§2, §3, §5, §38) ───────────────────────────────
+# The supervisor needs CAP_SETUID/CAP_SETGID to pre-drop the runtime identity
+# (setgroups→setgid→setuid in the pre-exec of `serve`) and CAP_SETPCAP to drop
+# the bounding set. The runtime broker itself runs as uid/gid `ferrokeyd` with
+# all capability sets empty before any client is accepted (§41). NoNewPrivileges
+# blocks execve-based privilege acquisition for the whole tree (§6).
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP
+AmbientCapabilities=
+
+# ── Filesystem (§38, §102) ──────────────────────────────────────────────────
+PrivateTmp=yes
+# PrivateDevices=no is deliberate (§39): PrivateDevices=yes creates a private
+# /dev with a deny-all device policy that hides /dev/uinput, which would break
+# device creation. Instead, DevicePolicy=closed + DeviceAllow exposes exactly
+# /dev/uinput to the bootstrap and nothing else — the property §39 requires:
+#   /dev/uinput available exactly where required
+#   all unrelated devices unavailable
+PrivateDevices=no
+DevicePolicy=closed
+DeviceAllow=/dev/uinput rw
+ProtectSystem=strict
+ProtectHome=yes
+# The broker binds its AF_UNIX listener under /run/ferrokeyd (owned by the
+# `ferrokeyd` user, mode 0755). /run is already writable under
+# ProtectSystem=strict; this documents the only intended runtime state path.
+ReadWritePaths=/run/ferrokeyd
+
+# ── Kernel interfaces (§38) ─────────────────────────────────────────────────
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectClock=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+
+# ── Network and syscalls (§31, §33, §38) ────────────────────────────────────
+# The daemon's only communication is AF_UNIX (bootstrap handoff + client IPC).
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+# Allowlist base for system services, then explicitly remove the §33
+# high-risk families that remain inside @system-service. On systemd ≥ 261,
+# @system-service already excludes bpf, perf_event_open, ptrace, mount,
+# module loading, kexec/reboot and the clock/swap families; the deny list
+# below removes the stragglers (keyring, userfaultfd, name_to_handle_at).
+# Verify with:
+#   systemd-analyze syscall-filter @system-service
+SystemCallFilter=@system-service
+SystemCallFilter=~@keyring userfaultfd name_to_handle_at
+SystemCallErrorNumber=EPERM
+
+# ── Crash policy (§103) ─────────────────────────────────────────────────────
+# The broker holds no user content by policy (§79, §80), but a crash dump
+# would still capture session metadata and kernel state; disable core dumps
+# entirely rather than risk broadly-readable dumps.
+LimitCORE=0
+
+[Install]
+WantedBy=graphical.target

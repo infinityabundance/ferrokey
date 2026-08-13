@@ -2,6 +2,20 @@
 //
 // Renders the keyboard plus a status line. Window semantics (no-focus
 // guarantees) come from ferrokey-surface, never from this file.
+//
+// The `key-pressed`/`key-released` callbacks are declared here but never
+// wired from the .slint side: the Rust pointer bridge (src/main.rs)
+// hit-tests raw pointer/touch surface events against the view geometry and
+// invokes them directly (rules 18, 85). Slint's TouchArea grabs the pointer
+// on press, so per-key callbacks could never deliver chords — the bridge
+// owns key semantics; this file only declares the interface.
+//
+// Terminal workspace mode (Phase 3 addendum #2): the window grows taller,
+// the keyboard stays fixed at the top (`keyboard-height`), and the embedded
+// PTY terminal pane renders below it as an opaque RGBA image produced by
+// ferrokey-terminal. The terminal pane has NO TouchArea: all pane input is
+// routed by the Rust terminal-input bridge (src/term_input.rs), so a pane
+// gesture can never grab the pointer away from the OSK (§25).
 
 import { Keyboard } from "keyboard.slint";
 import { KeyData } from "key.slint";
@@ -9,6 +23,7 @@ import { KeyData } from "key.slint";
 export component MainWindow inherits Window {
     in property <bool> degraded: false;
     in property <string> status-line: "";
+    in property <string> pending-label: "";
     in property <bool> text-mode: false;
     in property <[KeyData]> row1: [];
     in property <[KeyData]> row2: [];
@@ -16,42 +31,127 @@ export component MainWindow inherits Window {
     in property <[KeyData]> row4: [];
     in property <[KeyData]> row5: [];
     in property <[KeyData]> row6: [];
+    in property <[KeyData]> row7: [];
+    in property <length> base-width: 58px;
+
+    // Terminal workspace mode.
+    in property <bool> terminal-mode: false;
+    /// OSK height (logical px) — the keyboard never changes size.
+    in property <length> keyboard-height: 342px;
+    /// Terminal pane height (logical px).
+    in property <length> terminal-height: 420px;
+    /// The rendered terminal pane (opaque RGBA, physical px).
+    in property <image> terminal-image;
+    /// Current input destination badge (""SYSTEM"" / ""TERMINAL"").
+    in property <string> destination: "SYSTEM";
 
     callback key-pressed(string);
     callback key-released(string);
+    /// Toggle the input destination (SYSTEM ↔ TERMINAL); wired in Rust.
+    callback destination-switch();
 
     background: #111418;
     title: "Ferrokey";
     no-frame: true;
     width: 920px;
-    height: 342px;
+    height: root.keyboard-height + (root.terminal-mode ? root.terminal-height : 0px);
 
-    VerticalLayout {
-        padding: 0;
-        spacing: 0;
+    Keyboard {
+        degraded: root.degraded;
+        row1: root.row1;
+        row2: root.row2;
+        row3: root.row3;
+        row4: root.row4;
+        row5: root.row5;
+        row6: root.row6;
+        row7: root.row7;
+        base-width: root.base-width;
+        height: root.keyboard-height;
+    }
 
-        if root.status-line != "": Rectangle {
-            height: 24px;
-            background: #1b2027;
+    // The embedded terminal pane (image-only; input is routed by Rust).
+    if root.terminal-mode: Rectangle {
+        y: root.keyboard-height;
+        width: root.width;
+        height: root.terminal-height;
+        background: #111418;
+        Image {
+            width: root.width;
+            height: root.terminal-height;
+            source: root.terminal-image;
+            image-rendering: pixelated;
+        }
+        // Thin separator between the OSK and the terminal.
+        Rectangle {
+            y: 0px;
+            width: root.width;
+            height: 1px;
+            background: #3a4049;
+        }
+    }
+
+    // Destination badge (always visible in terminal mode). Tapping it
+    // switches the input destination — a standalone button, so its TouchArea
+    // may grab the pointer (§112).
+    if root.terminal-mode: TouchArea {
+        x: root.width - 92px;
+        y: root.keyboard-height + 4px;
+        width: 84px;
+        height: 18px;
+        clicked => { root.destination-switch(); }
+        Rectangle {
+            width: 84px;
+            height: 18px;
+            border-radius: 4px;
+            background: root.destination == "TERMINAL" ? #1c3a2a : #26303a;
+            border-width: 1px;
+            border-color: root.destination == "TERMINAL" ? #3f8a5c : #3a6ea5;
             Text {
-                text: root.status-line;
-                color: #c9d1d9;
-                font-size: 12px;
+                text: root.destination;
+                color: root.destination == "TERMINAL" ? #8ef0b0 : #8ecbff;
+                font-size: 10px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
         }
+    }
 
-        Keyboard {
-            degraded: root.degraded;
-            row1: root.row1;
-            row2: root.row2;
-            row3: root.row3;
-            row4: root.row4;
-            row5: root.row5;
-            row6: root.row6;
-            key-pressed(name) => root.key-pressed(name);
-            key-released(name) => root.key-released(name);
+    // Status line. Deliberately an OVERLAY (not a layout child): the key
+    // geometry must never shift when a status message appears, or pointer
+    // targeting (and the courts' fixed key coordinates) would break.
+    if root.status-line != "": Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: 22px;
+        background: #1b2027;
+        Text {
+            text: root.status-line;
+            color: #c9d1d9;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // Compose-state hint. Deliberately an OVERLAY (not a layout child): the
+    // key geometry must never shift when a dead key is pending, or pointer
+    // targeting (and the courts' fixed key coordinates) would break.
+    if root.pending-label != "": Rectangle {
+        x: (root.width - 220px) / 2;
+        y: 2px;
+        width: 220px;
+        height: 22px;
+        background: #26303a;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: #3a6ea5;
+        Text {
+            text: root.pending-label;
+            color: #8ecbff;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
         }
     }
 }

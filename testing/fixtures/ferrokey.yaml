@@ -1,6 +1,6 @@
 # ferrokey UI configuration used inside the court VMs.
 layout: us
-socket_path: /tmp/ferrokeyd.sock
+socket_path: /run/ferrokeyd/ferrokeyd.sock
 width: 920
 height: 342
 x11_display: ":0"

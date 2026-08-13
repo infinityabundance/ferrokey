@@ -1,6 +1,7 @@
 #cloud-config
-# Ferrokey Wayland court VM: wayfire (wlroots) compositor nested in the dummy
-# X server, with XWayland. Real zwlr_layer_shell_v1 support.
+# Ferrokey Wayland court VM: KWin (kwin_wayland) compositor nested in the
+# dummy X server (software QPainter compositing — no GPU needed), with
+# XWayland. Real zwlr_layer_shell_v1 support.
 ssh_pwauth: false
 disable_root: false
 
@@ -15,8 +16,9 @@ users:
 
 package_update: true
 packages:
-  - wayfire
-  - libgl1-mesa-dri
+  - kwin-wayland
+  - kwin-common
+  - kwin-data
   - dbus
   - xwayland
   - xserver-xorg-video-dummy
@@ -28,6 +30,7 @@ packages:
   - fonts-dejavu-core
   - evtest
   - libinput-tools
+  - xinput
   - procps
   - curl
   - jq

@@ -47,8 +47,12 @@ impl Default for RepeatConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
-    /// Active layout id (see ferrokey-layouts builtins).
+    /// Active layout id (see ferrokey-layouts builtins / xkb specs).
     pub layout: String,
+    /// Keyboard view ("compact" or "full"). Views are arrangements over the
+    /// same physical-key engine; the view's preferred window size wins over
+    /// `width`/`height` below.
+    pub view: String,
     /// Daemon socket path.
     pub socket_path: PathBuf,
     /// Initial OSK size (physical pixels).
@@ -61,6 +65,45 @@ pub struct UiConfig {
     /// Show the degraded-mode banner even when the backend preserves focus
     /// (diagnostics).
     pub force_degraded_banner: bool,
+    /// Start in text mode (characters are typed through the compose/text
+    /// engine instead of raw key events). Courts use this to exercise the
+    /// text path deterministically.
+    pub text_mode: bool,
+    /// Embedded terminal workspace mode (Phase 3 addendum #2).
+    pub terminal: TerminalUiConfig,
+    /// Initial input destination ("system" or "terminal").
+    pub destination: String,
+}
+
+/// The embedded terminal workspace configuration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalUiConfig {
+    /// Whether the embedded terminal workspace is active (`ferrokey --terminal`).
+    pub enabled: bool,
+    /// Terminal pane height in physical pixels (the OSK stays fixed above it).
+    pub pane_height: u32,
+    /// Terminal font size in physical px.
+    pub font_size_px: u32,
+    /// Scrollback capacity (lines).
+    pub scrollback_lines: usize,
+    /// Shell to run (None → `$SHELL` → `/bin/sh`).
+    pub shell: Option<String>,
+    /// Require confirmation for multiline pastes.
+    pub confirm_multiline_paste: bool,
+}
+
+impl Default for TerminalUiConfig {
+    fn default() -> Self {
+        TerminalUiConfig {
+            enabled: false,
+            pane_height: 420,
+            font_size_px: 16,
+            scrollback_lines: ferrokey_terminal::limits::DEFAULT_SCROLLBACK,
+            shell: None,
+            confirm_multiline_paste: true,
+        }
+    }
 }
 
 impl Default for UiConfig {
@@ -68,6 +111,7 @@ impl Default for UiConfig {
         let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
         UiConfig {
             layout: "us".into(),
+            view: "compact".into(),
             socket_path: PathBuf::from(runtime).join("ferrokeyd.sock"),
             width: 920,
             height: 342,
@@ -75,6 +119,9 @@ impl Default for UiConfig {
             sticky: StickyConfig::default(),
             repeat: RepeatConfig::default(),
             force_degraded_banner: false,
+            text_mode: false,
+            terminal: TerminalUiConfig::default(),
+            destination: "system".into(),
         }
     }
 }
@@ -129,15 +176,17 @@ mod tests {
     fn defaults_parse() {
         let cfg = UiConfig::default();
         assert_eq!(cfg.layout, "us");
+        assert_eq!(cfg.view, "compact");
         assert!(cfg.width > 0 && cfg.height > 0);
         assert!(cfg.sticky.latch_enabled);
     }
 
     #[test]
     fn yaml_round_trip() {
-        let yaml = "layout: de\nwidth: 800\nheight: 300\nrepeat:\n  cadence_ms: 40\n";
+        let yaml = "layout: de\nview: full\nwidth: 800\nheight: 300\nrepeat:\n  cadence_ms: 40\n";
         let cfg = UiConfig::parse(yaml).unwrap();
         assert_eq!(cfg.layout, "de");
+        assert_eq!(cfg.view, "full");
         assert_eq!(cfg.width, 800);
         assert_eq!(cfg.repeat.cadence_ms, 40);
     }

@@ -1,0 +1,19 @@
+# The embedded terminal workspace fixture (Phase 3 addendum #2): the OSK
+# drives a real PTY terminal directly — no ferrokeyd, no /dev/uinput.
+# The court replaces `shell` with the pty-oracle probe where byte-exact
+# assertions are needed.
+layout: us
+view: compact
+width: 920
+height: 342
+terminal:
+  enabled: true
+  pane_height: 420
+  font_size_px: 16
+  scrollback_lines: 10000
+  shell: /bin/sh
+destination: terminal
+repeat:
+  enabled: true
+  delay_ms: 500
+  cadence_ms: 30

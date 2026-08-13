@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 pub mod action;
+pub mod compose;
 pub mod key;
 pub mod layout;
 pub mod modifier;
@@ -22,6 +23,7 @@ pub use action::{
     DriverError, InputRequest, KeyAction, KeySink, KeyboardDriver, SinkError, TextError, TextSink,
     VirtualKey,
 };
+pub use compose::{ComposeEngine, FeedOutcome};
 pub use key::{PhysicalKey, CAPABILITY_SET};
 pub use layout::{DeadKey, KeyDefinition, KeySymbol, Layout};
 pub use modifier::{ModifierKind, ModifierSet};

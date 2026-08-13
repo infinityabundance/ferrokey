@@ -17,9 +17,12 @@ serde.workspace = true
 serde_yaml.workspace = true
 log.workspace = true
 thiserror.workspace = true
+# Real xkbcommon bindings (feature `xkb`). `default-features = false` keeps
+# the wayland/x11 feature flags out: Ferrokey only needs the core keymap API.
+xkbcommon = { version = "0.9.0", default-features = false, optional = true }
 
 [features]
 default = ["builtin"]
 builtin = []
-xkb = []
+xkb = ["dep:xkbcommon"]
 

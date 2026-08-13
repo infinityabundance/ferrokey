@@ -7,7 +7,7 @@
 
 set -u
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 TESTING_DIR="$REPO_ROOT/testing"
 EVIDENCE_DIR="$TESTING_DIR/evidence"
 SCRIPTS_DIR="$TESTING_DIR/scripts"
@@ -114,13 +114,17 @@ host_safety_postflight() {
     if grep -rl "ferrokey" /etc/udev/rules.d/ 2>/dev/null | grep -q .; then
         problems=$((problems+1)); echo "POSTFLIGHT FAIL: host udev rules reference ferrokey"
     fi
+    # The verdict is recorded for the security seal (§90: host contamination).
+    mkdir -p "$RUN_DIR"
     if [ "$problems" -gt 0 ]; then
         echo "HOST CONTAMINATION ........... DETECTED"
         echo "HOST SAFETY POSTFLIGHT ....... FAIL"
+        echo "DETECTED" > "$RUN_DIR/host-contamination.txt"
         exit 1
     fi
     echo "HOST CONTAMINATION ........... NONE"
     echo "HOST SAFETY POSTFLIGHT ....... PASS"
+    echo "NONE" > "$RUN_DIR/host-contamination.txt"
 }
 
 # ---------------------------------------------------------------------------
@@ -130,10 +134,12 @@ host_safety_postflight() {
 run_in_builder() {
     local cache_volume="${CARGO_CACHE_VOLUME:-ferrokey-cargo-cache}"
     local target_volume="${TARGET_CACHE_VOLUME:-ferrokey-target-cache}"
+    # The cache volume overlays only the registry: a volume mounted over
+    # /usr/local/cargo would hide the rust image's cargo toolchain.
     "$DOCKER" run --rm \
         --network "${COURT_NETWORK:-bridge}" \
         -v "$REPO_ROOT:/repo:ro" \
-        -v "$cache_volume:/usr/local/cargo" \
+        -v "$cache_volume:/usr/local/cargo/registry" \
         -v "$target_volume:/repo/target" \
         -e CARGO_HOME=/usr/local/cargo \
         -e CARGO_TARGET_DIR=/repo/target \

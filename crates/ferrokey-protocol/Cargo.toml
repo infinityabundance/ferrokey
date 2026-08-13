@@ -7,6 +7,9 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 readme = "README.md"
+# The cargo-fuzz harness lives under fuzz/ and is a separate (nightly-only)
+# package; it must not ship in the published crate.
+exclude = ["/fuzz"]
 
 [lints]
 workspace = true

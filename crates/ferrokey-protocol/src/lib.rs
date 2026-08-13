@@ -6,12 +6,12 @@
 //!
 //! ```text
 //! FK01
-//!   HELLO            client handshake (protocol version, client name)
-//!   CREATE_KEYBOARD  request device creation
-//!   KEY_DOWN u16     key code
-//!   KEY_UP u16       key code
-//!   RELEASE_ALL      emergency release
-//!   PING u32         heartbeat (server replies PONG)
+//!   HELLO        client handshake (protocol version, client name)
+//!   OPEN_SESSION logical client session only — never creates a kernel device
+//!   KEY_DOWN u16 key code
+//!   KEY_UP u16   key code
+//!   RELEASE_ALL  emergency release
+//!   PING u32     heartbeat (server replies PONG)
 //! ```
 
 #![forbid(unsafe_code)]

@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
 
 /// A dead key (combining) accent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DeadKey {
     Grave,

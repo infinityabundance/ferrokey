@@ -73,16 +73,32 @@ int main(int argc, char **argv) {
     layout->addWidget(label);
     layout->addWidget(edit);
     window.show();
+    window.activateWindow();
+    // Give the field keyboard focus before the court activates the window so
+    // that activation deterministically reports focused:true (Qt restores the
+    // previous focus widget when a window is (re)activated).
+    edit->setFocus();
 
-    // Poll the window's active state for focus changes (Qt has no direct
-    // focus-in/out signal on QLineEdit that fires for the window).
+    // Qt has no single "this window owns the keyboard focus" signal that also
+    // covers widget-level focus restoration, so poll the canonical state:
+    // the window is the active window AND the keyboard focus widget belongs
+    // to this window. This mirrors the GTK target's entry-focus semantics.
+    // (QWidget::hasFocus() would be wrong here: it is only true for the focus
+    // widget itself, and the QLineEdit holds focus, not the QWidget.)
     QTimer focusTimer;
     bool wasFocused = false;
     QObject::connect(&focusTimer, &QTimer::timeout, [&]() {
-        bool focused = window.hasFocus();
+        QWidget *fw = QApplication::focusWidget();
+        bool active = window.isActiveWindow();
+        bool focused = active && fw != nullptr && fw->window() == &window;
         if (focused != wasFocused) {
             wasFocused = focused;
             reportFocus(focused);
+            std::fprintf(stderr,
+                         "[qt-target] focus %s (active=%d focusWidget=%s)\n",
+                         focused ? "true" : "false", active ? 1 : 0,
+                         fw ? fw->metaObject()->className() : "null");
+            std::fflush(stderr);
         }
     });
     focusTimer.start(50);

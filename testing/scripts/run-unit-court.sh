@@ -14,12 +14,14 @@ host_safety_preflight
 "$DOCKER" volume create ferrokey-target-cache >/dev/null 2>&1 || true
 
 # Cargo cache pre-warm: copy the host registry (downloads only — no test
-# runs on the host, nothing touches input devices or the desktop).
+# runs on the host, nothing touches input devices or the desktop). The
+# copies are re-chmodded: the host registry contains owner-only (0640) files
+# that a different container uid could not read.
 if [ -d "${HOME}/.cargo/registry" ]; then
     "$DOCKER" run --rm \
         -v ferrokey-cargo-cache:/cache \
         -v "${HOME}/.cargo/registry:/src/registry:ro" \
-        alpine sh -c 'cp -a /src/registry/. /cache/ 2>/dev/null || true' >/dev/null 2>&1 || true
+        alpine sh -c 'cp -a /src/registry/. /cache/ 2>/dev/null || true; find /cache -type d -exec chmod 755 {} + 2>/dev/null; find /cache -type f -exec chmod 644 {} + 2>/dev/null' >/dev/null 2>&1 || true
 fi
 
 if ! run_in_builder bash /repo/testing/courts/build/court.sh; then

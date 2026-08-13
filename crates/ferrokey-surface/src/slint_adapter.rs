@@ -150,17 +150,22 @@ impl FerrokeyPlatform {
         }
     }
 
-    /// Process surface events, dispatching them into Slint.
-    pub fn process_events(&self, timeout: Option<Duration>) -> Result<(), PlatformError> {
+    /// Process surface events, dispatching them into Slint for visuals and
+    /// returning the raw events so the app's pointer bridge can drive key
+    /// semantics (rules 18, 85).
+    pub fn process_events(
+        &self,
+        timeout: Option<Duration>,
+    ) -> Result<Vec<SurfaceEvent>, PlatformError> {
         let events = self
             .surface
             .borrow_mut()
             .poll_events(timeout)
             .map_err(|e| PlatformError::Other(e.to_string()))?;
-        for event in events {
-            self.handle_surface_event(event);
+        for event in &events {
+            self.handle_surface_event(*event);
         }
-        Ok(())
+        Ok(events)
     }
 
     /// Render the Slint scene into the surface if a redraw was requested.
@@ -216,49 +221,63 @@ impl FerrokeyPlatform {
     fn handle_surface_event(&self, event: SurfaceEvent) {
         let scale = self.scale();
         let window = self.window();
-        match event {
-            SurfaceEvent::PointerMoved { x, y } => {
-                window.dispatch_event(WindowEvent::PointerMoved {
-                    position: LogicalPosition::new(
-                        (x / f64::from(scale)) as f32,
-                        (y / f64::from(scale)) as f32,
-                    ),
-                });
-            }
-            SurfaceEvent::PointerPressed { x, y, button } => {
-                window.dispatch_event(WindowEvent::PointerPressed {
-                    position: LogicalPosition::new(
-                        (x / f64::from(scale)) as f32,
-                        (y / f64::from(scale)) as f32,
-                    ),
-                    button: to_slint_button(button),
-                });
-            }
-            SurfaceEvent::PointerReleased { x, y, button } => {
-                window.dispatch_event(WindowEvent::PointerReleased {
-                    position: LogicalPosition::new(
-                        (x / f64::from(scale)) as f32,
-                        (y / f64::from(scale)) as f32,
-                    ),
-                    button: to_slint_button(button),
-                });
-            }
-            SurfaceEvent::PointerLeft => {
-                window.dispatch_event(WindowEvent::PointerExited);
-            }
-            SurfaceEvent::Resized { width, height } => {
-                let physical = PhysicalSize { width, height };
-                self.size.set(physical);
-                self.adapter.size.set(physical);
-                window.dispatch_event(WindowEvent::Resized {
-                    size: LogicalSize::new(width as f32 / scale, height as f32 / scale),
-                });
-                window.request_redraw();
-            }
-            SurfaceEvent::CloseRequested => {
-                window.dispatch_event(WindowEvent::CloseRequested);
-            }
+        // Keep the platform's size bookkeeping in sync for compositor-driven
+        // resizes (the pure translation below cannot do that).
+        if let SurfaceEvent::Resized { width, height } = event {
+            let physical = PhysicalSize { width, height };
+            self.size.set(physical);
+            self.adapter.size.set(physical);
         }
+        for wevent in surface_event_to_window_events(event, scale) {
+            window.dispatch_event(wevent);
+        }
+        if matches!(event, SurfaceEvent::Resized { .. }) {
+            window.request_redraw();
+        }
+    }
+}
+
+/// Translate one surface event into the Slint [`WindowEvent`]s it represents
+/// (physical → logical coordinates via `scale`).
+///
+/// Touch events become pointer events with the left button: Slint's
+/// `TouchArea` reacts identically to touch and click, which is precisely the
+/// OSK property the compatibility contract requires.
+fn surface_event_to_window_events(event: SurfaceEvent, scale: f32) -> Vec<WindowEvent> {
+    let pos = |x: f64, y: f64| {
+        LogicalPosition::new((x / f64::from(scale)) as f32, (y / f64::from(scale)) as f32)
+    };
+    match event {
+        SurfaceEvent::PointerMoved { x, y } | SurfaceEvent::TouchMoved { x, y } => {
+            vec![WindowEvent::PointerMoved {
+                position: pos(x, y),
+            }]
+        }
+        SurfaceEvent::PointerPressed { x, y, button } => vec![WindowEvent::PointerPressed {
+            position: pos(x, y),
+            button: to_slint_button(button),
+        }],
+        SurfaceEvent::PointerReleased { x, y, button } => vec![WindowEvent::PointerReleased {
+            position: pos(x, y),
+            button: to_slint_button(button),
+        }],
+        SurfaceEvent::PointerLeft | SurfaceEvent::TouchCancelled => {
+            vec![WindowEvent::PointerExited]
+        }
+        SurfaceEvent::TouchPressed { x, y } => vec![WindowEvent::PointerPressed {
+            position: pos(x, y),
+            button: PointerEventButton::Left,
+        }],
+        SurfaceEvent::TouchReleased { x, y } => vec![WindowEvent::PointerReleased {
+            position: pos(x, y),
+            button: PointerEventButton::Left,
+        }],
+        SurfaceEvent::Resized { width, height } => {
+            vec![WindowEvent::Resized {
+                size: LogicalSize::new(width as f32 / scale, height as f32 / scale),
+            }]
+        }
+        SurfaceEvent::CloseRequested => vec![WindowEvent::CloseRequested],
     }
 }
 
@@ -317,5 +336,69 @@ mod tests {
         adapter.request_redraw();
         assert!(platform.redraw_requested());
         assert!(!platform.redraw_requested());
+    }
+
+    #[test]
+    fn touch_maps_to_left_pointer_events() {
+        let events =
+            surface_event_to_window_events(SurfaceEvent::TouchPressed { x: 80.0, y: 40.0 }, 2.0);
+        assert_eq!(
+            events,
+            vec![WindowEvent::PointerPressed {
+                position: LogicalPosition::new(40.0, 20.0),
+                button: PointerEventButton::Left,
+            }]
+        );
+        let events =
+            surface_event_to_window_events(SurfaceEvent::TouchMoved { x: 160.0, y: 80.0 }, 2.0);
+        assert_eq!(
+            events,
+            vec![WindowEvent::PointerMoved {
+                position: LogicalPosition::new(80.0, 40.0),
+            }]
+        );
+        let events =
+            surface_event_to_window_events(SurfaceEvent::TouchReleased { x: 90.0, y: 50.0 }, 2.0);
+        assert_eq!(
+            events,
+            vec![WindowEvent::PointerReleased {
+                position: LogicalPosition::new(45.0, 25.0),
+                button: PointerEventButton::Left,
+            }]
+        );
+        let events = surface_event_to_window_events(SurfaceEvent::TouchCancelled, 1.0);
+        assert_eq!(events, vec![WindowEvent::PointerExited]);
+    }
+
+    #[test]
+    fn pointer_buttons_map_preserving_button() {
+        let events = surface_event_to_window_events(
+            SurfaceEvent::PointerPressed {
+                x: 10.0,
+                y: 20.0,
+                button: crate::PointerButton::Right,
+            },
+            1.0,
+        );
+        assert_eq!(
+            events,
+            vec![WindowEvent::PointerPressed {
+                position: LogicalPosition::new(10.0, 20.0),
+                button: PointerEventButton::Right,
+            }]
+        );
+    }
+
+    #[test]
+    fn scale_affects_coordinates() {
+        let events =
+            surface_event_to_window_events(SurfaceEvent::TouchPressed { x: 200.0, y: 100.0 }, 4.0);
+        assert_eq!(
+            events,
+            vec![WindowEvent::PointerPressed {
+                position: LogicalPosition::new(50.0, 25.0),
+                button: PointerEventButton::Left,
+            }]
+        );
     }
 }

@@ -27,6 +27,7 @@
 pub mod detect;
 pub mod fallback;
 pub mod slint_adapter;
+pub mod touch;
 #[cfg(feature = "wayland")]
 pub mod wayland;
 #[cfg(feature = "x11")]
@@ -72,6 +73,12 @@ impl SurfaceBackend {
 }
 
 /// Pointer/input events produced by a surface, in *physical* pixels.
+///
+/// Touch is a first-class event family (not synthesized pointer events): a
+/// touchscreen or pen may be the only pointing device available (kiosks,
+/// phones, tablets), and the surface layer must report the interaction
+/// honestly. The Slint adapter maps touch events onto pointer semantics for
+/// Slint's `TouchArea` (button = Left).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SurfaceEvent {
     PointerMoved {
@@ -89,6 +96,23 @@ pub enum SurfaceEvent {
         button: PointerButton,
     },
     PointerLeft,
+    /// A touch (or pen contact) went down.
+    TouchPressed {
+        x: f64,
+        y: f64,
+    },
+    /// A touch (or pen contact) moved while down.
+    TouchMoved {
+        x: f64,
+        y: f64,
+    },
+    /// A touch (or pen contact) was lifted.
+    TouchReleased {
+        x: f64,
+        y: f64,
+    },
+    /// The compositor cancelled the touch sequence (e.g. a palm rejection).
+    TouchCancelled,
     /// The surface was resized (compositor-driven).
     Resized {
         width: u32,
@@ -99,7 +123,7 @@ pub enum SurfaceEvent {
 }
 
 /// Pointer buttons Ferrokey translates to Slint events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PointerButton {
     Left,
     Middle,

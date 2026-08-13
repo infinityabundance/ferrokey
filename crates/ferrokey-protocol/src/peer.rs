@@ -40,6 +40,10 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "SO_PEERCRED getsockopt is a real kernel call Miri cannot interpret (§86)"
+    )]
     fn peer_identity_reflects_caller() {
         // A connected socket pair: each end reports the *other* end's
         // credentials, which are this process's.

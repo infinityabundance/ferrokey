@@ -9,10 +9,14 @@
 FROM rust:1.96-bookworm
 
 # Fonts so that Slint's fontdb finds a font when the UI runs (VM courts).
+# libxkbcommon-dev: the `xkb` feature links real libxkbcommon (system layouts
+# like de@neo / us(intl)); the dev package ships the .pc + headers.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-dejavu-core \
         ca-certificates \
         git \
+        libxkbcommon-dev \
+        xkb-data \
     && rm -rf /var/lib/apt/lists/*
 
 # Sanitize the environment inside the court: no host display/session leakage.

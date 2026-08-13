@@ -760,6 +760,10 @@ pub const CAPABILITY_SET: &[PhysicalKey] = &[
     PhysicalKey::CapsLock,
     PhysicalKey::NumLock,
     PhysicalKey::ScrollLock,
+    // Print-screen / pause (advertised by the full-desktop view; §21: every
+    // supported PhysicalKey must be in the immutable capability set)
+    PhysicalKey::SysRq,
+    PhysicalKey::Pause,
     // Function row
     PhysicalKey::F1,
     PhysicalKey::F2,

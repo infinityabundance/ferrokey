@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- Ferrokey browser-court target page.
+     Three editable widgets stacked in equal thirds: a text field, a textarea
+     and a contenteditable. On every input the page folds all three values
+     into the document title (newlines escaped), so the courts can read the
+     live state with `xdotool getwindowname` — a machine-readable oracle, no
+     screenshots (rule 17). The title always starts with the FERROKEY prefix
+     so `xdotool search --name FERROKEY` finds the right window. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>FERROKEY|||</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  #app > * { flex: 1; box-sizing: border-box; width: 100%;
+             font-size: 20px; padding: 6px; border: 1px solid #888; }
+</style>
+</head>
+<body>
+<div id="app">
+  <input id="text" placeholder="text field">
+  <textarea id="area" placeholder="textarea"></textarea>
+  <div id="ce" contenteditable></div>
+</div>
+<script>
+  "use strict";
+  // Geometry + active-element oracle for the courts:
+  //   |GEO|<innerHeight>,<t>,<a>,<c>  where t/a/c are VIEWPORT-relative
+  //   y-centers of text/area/ce (no chrome added — the court derives the
+  //   chrome as window-height minus innerHeight).
+  //   |FOC|<activeElementId>           which field currently owns focus.
+  function geo() {
+    var ih = window.innerHeight;
+    var centers = ["text", "area", "ce"].map(function (id) {
+      var r = document.getElementById(id).getBoundingClientRect();
+      return Math.round(r.top + r.height / 2);
+    }).join(",");
+    return "|GEO|" + ih + "," + centers;
+  }
+  function foc() {
+    var el = document.activeElement;
+    var id = el && el.id ? el.id : (el ? el.tagName : "none");
+    return "|FOC|" + id;
+  }
+  function sync() {
+    var t = document.getElementById("text").value;
+    var a = document.getElementById("area").value.replace(/\n/g, "\\n");
+    var c = document.getElementById("ce").textContent;
+    document.title = "FERROKEY|" + t + "|" + a + "|" + c + geo() + foc();
+  }
+  ["text", "area", "ce"].forEach(function (id) {
+    document.getElementById(id).addEventListener("input", sync);
+  });
+  window.addEventListener("resize", sync);
+  document.addEventListener("focusin", sync);
+  sync();
+</script>
+</body>
+</html>

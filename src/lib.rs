@@ -6,7 +6,7 @@
 //! pull in the whole stack with a single dependency:
 //!
 //! ```
-//! use ferrokey::{core::PhysicalKey, uinput::VirtualKeyboard};
+//! use ferrokey::{core::PhysicalKey, uinput::UinputDevice};
 //! ```
 //!
 //! The umbrella contains no code of its own; each module is the
@@ -19,8 +19,8 @@
 //!   and the daemon.
 //! * [`surface`](crate::surface) — window-system integration (Wayland/X11)
 //!   and the custom Slint platform adapter.
-//! * [`uinput`](crate::uinput) — the uinput virtual keyboard with its
-//!   defensive held-key ledger.
+//! * [`uinput`](crate::uinput) — the uinput virtual keyboard (created once by
+//!   the bootstrap component) with its defensive held-key ledger.
 
 pub use ferrokey_core as core;
 pub use ferrokey_layouts as layouts;

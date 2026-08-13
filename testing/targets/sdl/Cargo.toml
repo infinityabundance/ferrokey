@@ -1,0 +1,18 @@
+[package]
+name = "ferrokey-test-target-sdl"
+description = "Court target: SDL2 window reporting genuine key state transitions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ferrokey-test-target-sdl"
+path = "src/main.rs"
+
+[dependencies]
+ferrokey-test-common = { path = "../common" }
+sdl2 = "0.36"
+log = "0.4"
+
+[lints.rust]
+unsafe_code = "forbid"

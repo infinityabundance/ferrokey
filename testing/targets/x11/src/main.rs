@@ -57,8 +57,14 @@ fn main() {
     loop {
         let event = conn.wait_for_event().expect("x11 event");
         match event {
-            Event::FocusIn(_) => reporter.focus(true),
-            Event::FocusOut(_) => reporter.focus(false),
+            Event::FocusIn(e) => {
+                reporter.focus(true);
+                reporter.focus_detail("focus-in", &format!("{:?}", e.mode));
+            }
+            Event::FocusOut(e) => {
+                reporter.focus(false);
+                reporter.focus_detail("focus-out", &format!("{:?}", e.mode));
+            }
             Event::KeyPress(e) => {
                 reporter.key(u32::from(e.detail), true);
             }

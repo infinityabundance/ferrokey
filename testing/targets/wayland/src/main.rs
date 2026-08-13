@@ -6,10 +6,16 @@
 use ferrokey_test_common::{Reporter, TargetEvent};
 use wayland_client::delegate_noop;
 use wayland_client::protocol::{
-    wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_surface,
+    wl_buffer, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+
+/// Window size: fills the court output (1280x720) so any click on the
+/// compositor surface focuses it — KWin places new toplevels at a
+/// compositor-chosen position, and the court clicks a fixed point.
+const WIN_W: u32 = 1280;
+const WIN_H: u32 = 720;
 
 struct State {
     reporter: Reporter,
@@ -17,6 +23,7 @@ struct State {
     wm_base: Option<(u32, xdg_wm_base::XdgWmBase)>,
     toplevel: Option<(xdg_surface::XdgSurface, xdg_toplevel::XdgToplevel)>,
     configured: bool,
+    shm: Option<wl_shm::WlShm>,
 }
 
 fn main() {
@@ -36,6 +43,7 @@ fn main() {
         wm_base: None,
         toplevel: None,
         configured: false,
+        shm: None,
     };
 
     loop {
@@ -48,16 +56,57 @@ impl State {
         if self.toplevel.is_some() {
             return;
         }
-        let (Some(compositor), Some((_, wm_base))) = (&self.compositor, &self.wm_base) else {
+        let (Some(compositor), Some((_, wm_base)), Some(shm)) =
+            (&self.compositor, &self.wm_base, &self.shm)
+        else {
             return;
         };
         let surface = compositor.create_surface(qh, ());
         let xdg_surface = wm_base.get_xdg_surface(&surface, qh, ());
         let toplevel = xdg_surface.get_toplevel(qh, ());
         toplevel.set_title("ferrokey-test-target-wayland".into());
+        // A real, full-output window: the surface needs geometry AND an input
+        // region before the compositor can ever give it keyboard focus (an
+        // empty surface is not clickable).
+        toplevel.set_min_size(WIN_W as i32, WIN_H as i32);
+        let pool = create_shm_pool(shm, qh);
+        let stride = (WIN_W * 4) as i32;
+        let buffer = pool.create_buffer(
+            0,
+            WIN_W as i32,
+            WIN_H as i32,
+            stride,
+            wl_shm::Format::Argb8888,
+            qh,
+            (),
+        );
+        surface.attach(Some(&buffer), 0, 0);
         surface.commit();
         self.toplevel = Some((xdg_surface, toplevel));
     }
+}
+
+/// Create a `wl_shm` pool backed by a temporary file. The buffer is left
+/// transparent (zeroed); a surface's input region defaults to its buffer
+/// bounds, so the window is clickable/focusable even when invisible.
+fn create_shm_pool(shm: &wl_shm::WlShm, qh: &QueueHandle<State>) -> wl_shm_pool::WlShmPool {
+    use std::os::unix::io::AsFd as _;
+
+    let size = (WIN_W * WIN_H * 4) as usize;
+    let path = std::env::temp_dir().join(format!("ferrokey-target-shm-{}", std::process::id()));
+    // Open read+write: the compositor mmaps the received fd PROT_READ, which
+    // fails (EACCES) on an O_WRONLY file.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&path)
+        .expect("create shm file");
+    let _ = std::fs::remove_file(&path); // the fd keeps the file alive
+    file.set_len(size as u64).expect("ftruncate shm file");
+    // The request moves a duplicate of the fd to the compositor over the wire.
+    shm.create_pool(file.as_fd(), size as i32, qh, ())
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
@@ -81,6 +130,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 }
                 "wl_seat" => {
                     registry.bind::<wl_seat::WlSeat, _, _>(name, 7, qh, ());
+                }
+                "wl_shm" => {
+                    let shm: wl_shm::WlShm = registry.bind(name, 1, qh, ());
+                    state.shm = Some(shm);
+                    state.maybe_init_window(qh);
                 }
                 "xdg_wm_base" => {
                     let wm_base: xdg_wm_base::XdgWmBase = registry.bind(name, 1, qh, ());
@@ -199,3 +253,5 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
 }
 
 delegate_noop!(State: ignore wl_shm::WlShm);
+delegate_noop!(State: ignore wl_shm_pool::WlShmPool);
+delegate_noop!(State: ignore wl_buffer::WlBuffer);

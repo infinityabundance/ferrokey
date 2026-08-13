@@ -1,0 +1,25 @@
+[package]
+name = "ferrokey-protocol-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+
+# Deliberately detached from the workspace: the fuzz targets need nightly
+# (libFuzzer `-Z sanitizer`), so they must never be part of the stable
+# `cargo build --workspace` the build court runs.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ferrokey-protocol = { path = ".." }
+
+[[bin]]
+name = "fuzz_decoder"
+path = "fuzz_targets/fuzz_decoder.rs"
+test = false
+doc = false
+bench = false

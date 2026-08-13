@@ -10,15 +10,16 @@ sudo chmod 700 /run/user/1000
 
 start_xorg
 
-sudo -u "$COURT_USER" env DISPLAY=:0 WLR_BACKENDS=x11 LIBGL_ALWAYS_SOFTWARE=1 \
-    XDG_RUNTIME_DIR=/run/user/1000 dbus-run-session -- \
-    wayfire --socket wayland-court-0 > "$OUT/wayfire.log" 2>&1 &
-sleep 5
+# ── Start kwin_wayland (X11 backend, software compositing) ────────────────
+sudo -u "$COURT_USER" env DISPLAY=:0 KWIN_COMPOSE=Q LIBGL_ALWAYS_SOFTWARE=1 \
+    XDG_RUNTIME_DIR=/run/user/1000 timeout 180 dbus-run-session -- \
+    kwin_wayland --socket wayland-court-0 > "$OUT/kwin.log" 2>&1 &
+sleep 8
 if ls /run/user/1000/wayland-court-0 >/dev/null 2>&1; then
-    ok "wayfire running"
+    ok "kwin_wayland running"
 else
-    bad "wayfire failed to start"
-    tail -20 "$OUT/wayfire.log"
+    bad "kwin_wayland failed to start"
+    tail -20 "$OUT/kwin.log"
     finish_court FAIL "court" "xwayland"
 fi
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal FK01 protocol client for the compatibility courts.
+"""Minimal FK01 protocol client for the compatibility courts (Phase 3).
 
 Usage:
   fk-client.py --socket PATH handshake [key-down CODE] [key-up CODE]
@@ -8,6 +8,9 @@ Usage:
   fk-client.py --socket PATH drain           # read replies until EOF
 
 Exits 0 if the daemon behaved as expected for the given sequence.
+
+Phase 3: OPEN_SESSION (0x02) is purely logical client state — it never
+creates a kernel device. The broker owns one pre-created virtual keyboard.
 """
 import socket
 import struct
@@ -15,11 +18,13 @@ import sys
 import time
 
 MAGIC = b"FK01"
+PROTOCOL_VERSION = 2
 OP_HELLO = 0x01
-OP_CREATE = 0x02
+OP_OPEN_SESSION = 0x02
 OP_DOWN = 0x10
 OP_UP = 0x11
 OP_RELEASE = 0x12
+OP_REPEAT = 0x13
 OP_PING = 0x20
 OP_PONG = 0x21
 OP_OK = 0x80
@@ -52,7 +57,7 @@ def read_frame(sock: socket.socket):
 
 def main() -> int:
     args = sys.argv[1:]
-    sock_path = "/tmp/ferrokeyd.sock"
+    sock_path = "/run/ferrokeyd/ferrokeyd.sock"
     if "--socket" in args:
         i = args.index("--socket")
         sock_path = args[i + 1]
@@ -98,8 +103,8 @@ def main() -> int:
             sock.connect(sock_path)
             sock.settimeout(0.2)
             # Re-handshake after each reconnect.
-            sock.sendall(frame(OP_HELLO, bytes([1]) + struct.pack("<H", 4) + b"fuzz"))
-            sock.sendall(frame(OP_CREATE))
+            sock.sendall(frame(OP_HELLO, bytes([PROTOCOL_VERSION]) + struct.pack("<H", 4) + b"fuzz"))
+            sock.sendall(frame(OP_OPEN_SESSION))
             time.sleep(0.05)
         print("fuzz: daemon survived")
         return 0
@@ -119,9 +124,8 @@ def main() -> int:
         print(f"drain: {count} replies")
         return 0
 
-    # --hold SECONDS: keep the connection (and thus the virtual keyboard)
-    # alive after the command sequence, so courts can capture device evidence
-    # while the device exists.
+    # --hold SECONDS: keep the connection alive after the command sequence,
+    # so courts can observe the (long-lived) device while it exists.
     hold = 0
     if "--hold" in args:
         i = args.index("--hold")
@@ -138,21 +142,21 @@ def main() -> int:
         op = tokens[idx]
         if op == "handshake":
             name = b"court"
-            sock.sendall(frame(OP_HELLO, bytes([1]) + struct.pack("<H", len(name)) + name))
-            sock.sendall(frame(OP_CREATE))
+            sock.sendall(frame(OP_HELLO, bytes([PROTOCOL_VERSION]) + struct.pack("<H", len(name)) + name))
+            sock.sendall(frame(OP_OPEN_SESSION))
             body = read_frame(sock)
             if body and body[0] == OP_OK:
                 print("handshake: ok")
             else:
                 print("handshake: FAILED", body)
                 error = True
-        elif op in ("key-down", "key-up"):
+        elif op in ("key-down", "key-up", "key-repeat"):
             if idx + 1 >= len(tokens):
                 print(f"{op}: missing code")
                 error = True
             else:
                 code = int(tokens[idx + 1])
-                opcode = OP_DOWN if op == "key-down" else OP_UP
+                opcode = {"key-down": OP_DOWN, "key-up": OP_UP, "key-repeat": OP_REPEAT}[op]
                 sock.sendall(frame(opcode, struct.pack("<H", code)))
                 idx += 1
         elif op == "release-all":
@@ -184,8 +188,8 @@ def main() -> int:
                 print("expect-error: FAILED", body)
                 error = True
         elif op == "no-hello":
-            # Send CREATE_KEYBOARD without HELLO: must be rejected.
-            sock.sendall(frame(OP_CREATE))
+            # Send OPEN_SESSION without HELLO: must be rejected.
+            sock.sendall(frame(OP_OPEN_SESSION))
             body = read_frame(sock)
             if body and body[0] == OP_ERROR:
                 print("no-hello: ok (rejected)")

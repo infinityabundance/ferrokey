@@ -39,4 +39,7 @@ cargo test -p ferrokey-layouts
 echo "== CORE.007: state-machine tests =="
 cargo test -p ferrokey-core
 
+echo "== CORE.008: xkbcommon bridge (real libxkbcommon) =="
+cargo test -p ferrokey-layouts --features xkb
+
 echo "ALL UNIT/BUILD COURTS PASSED"

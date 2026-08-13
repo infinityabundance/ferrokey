@@ -13,7 +13,14 @@ modifier state*; this crate decides *what symbols exist*.
 
 - `builtin` (default) — the YAML layouts shipped with the crate (`us`,
   `us-intl`, `gb`, `de`, `fr`, `dvorak`, …), compiled in.
-- `xkb` — an xkbcommon bridge for loading system layouts.
+- `xkb` — a real `libxkbcommon` bridge: [`xkb::xkbcommon::XkbKeymap`] loads a
+  system keymap from rules/layout/variant names (e.g. `us(intl)`, `de@neo`)
+  and converts its four XKB levels into a Ferrokey `Layout`. Requires
+  `libxkbcommon-dev` at build time; the built-in YAML layouts never do.
+
+  [`xkb::load_system_layout`] accepts the usual XKB specs
+  (`"us"`, `"us(intl)"`, `"de@neo"`) and falls back to `None` when the
+  keymap cannot be built or fails validation.
 
 ## Layout format
 

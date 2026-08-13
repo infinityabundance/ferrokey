@@ -1,8 +1,9 @@
 name: courts
 
-# Rule 46: CI runs the SAME court orchestration as local development. A
-# reduced matrix for PRs, the standard matrix on main, the full matrix on
-# release tags — but the underlying courts are identical.
+# Rule 46: CI runs the SAME court orchestration as local development —
+# `run-all-courts.sh` is the single entrypoint (rule 45), so a failure in
+# any court (including the SEC.* security courts) makes CI RED (§94: no
+# `|| true` may mask a failed receipt).
 
 on:
   push:
@@ -11,41 +12,43 @@ on:
   pull_request:
 
 jobs:
+  fuzz:
+    # Rule 71: the protocol decoder is a privilege boundary, so the
+    # "hostile-input resistant" claim gets a real libFuzzer harness in CI.
+    # libFuzzer needs nightly; the deterministic stress tests in the unit
+    # court cover the same property on stable. Timeboxed so PRs stay fast.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz the protocol decoder
+        run: |
+          cd crates/ferrokey-protocol/fuzz
+          cargo +nightly fuzz run fuzz_decoder -- \
+            -max_total_time=180 \
+            -rss_limit_mb=2048 \
+            -timeout=10
+
   courts:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # The full matrix (incl. the §93 mutation courts and the long-run soak)
+    # runs under TCG (GitHub runners expose no /dev/kvm), so allow a wide
+    # budget. SOAK_SECONDS is shortened for PRs; the release gate runs the
+    # full-duration soak.
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build court images
-        run: ./testing/scripts/build-images.sh
-
-      - name: Unit + build courts (Docker)
-        run: ./testing/scripts/run-unit-court.sh
-
-      - name: Clean build court
-        run: ./testing/scripts/run-clean-court.sh
-
-      # VM courts need KVM. GitHub Actions runners don't expose /dev/kvm, so
-      # the VM matrix uses TCG (rule 36: correctness must not depend on KVM).
-      - name: VM courts (X11 profile, TCG)
-        if: github.event_name != 'release'
-        run: |
-          for court in uinput permissions x11 focus crash repeat modifiers layouts applications; do
-            ./testing/scripts/run-vm-court.sh "$court" x11 || true
-          done
-
-      - name: VM courts (Wayland profile, TCG)
-        if: github.event_name != 'release'
-        run: |
-          for court in wayland xwayland; do
-            ./testing/scripts/run-vm-court.sh "$court" wayland || true
-          done
-
-      - name: Collect evidence + postflight
-        run: ./testing/scripts/collect-evidence.sh && ./testing/scripts/postflight.sh
+      - name: Full court suite (incl. SEC.* security courts)
+        env:
+          SOAK_SECONDS: ${{ github.event_name == 'release' && 300 || 120 }}
+        run: ./testing/scripts/run-all-courts.sh
 
       - name: Upload evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: evidence

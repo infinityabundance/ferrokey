@@ -20,7 +20,7 @@ for i in $(seq 1 100); do
   if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 -o LogLevel=ERROR -i $STATE/keys/debugkey4 -p 22996 court@127.0.0.1 true 2>/dev/null; then break; fi
   sleep 2
 done
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i $STATE/keys/debugkey4 -p 22996 court@127.0.0.1 'echo "--- court-output ---"; ls -la court-output/ 2>&1; echo "--- events.log ---"; cat court-output/events.log 2>/dev/null; echo "--- target.log ---"; cat court-output/target.log 2>/dev/null; echo "--- ps ---"; pgrep -af "ferrokey" || true; echo "--- socket ---"; ls -la /tmp/ferrokey-test-target.sock /tmp/ferrokeyd.sock 2>&1' || true
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i $STATE/keys/debugkey4 -p 22996 court@127.0.0.1 'echo "--- court-output ---"; ls -la court-output/ 2>&1; echo "--- events.log ---"; cat court-output/events.log 2>/dev/null; echo "--- target.log ---"; cat court-output/target.log 2>/dev/null; echo "--- ps ---"; pgrep -af "ferrokey" || true; echo "--- socket ---"; ls -la /tmp/ferrokey-test-target.sock /run/ferrokeyd/ferrokeyd.sock 2>&1' || true
 
 qemu_pid=$(cat /court/state/qemu-debug4.pid 2>/dev/null || true)
 [ -n "$qemu_pid" ] && kill "$qemu_pid" 2>/dev/null || true

@@ -31,6 +31,9 @@ use std::thread;
 pub enum TargetEvent {
     /// Keyboard focus entered/left the target window.
     Focus { focused: bool },
+    /// Focus-change detail (X11 `Notify*` mode) — why the focus changed;
+    /// courts use it to attribute focus flickers.
+    FocusDetail { mode: String, detail: String },
     /// The visible text of the target's input field.
     Text { text: String },
     /// A raw key event observed by the target.
@@ -151,6 +154,14 @@ impl Reporter {
 
     pub fn focus(&self, focused: bool) {
         self.report(TargetEvent::Focus { focused });
+    }
+
+    /// Report an X11 focus-change with its cause (mode + detail).
+    pub fn focus_detail(&self, mode: &str, detail: &str) {
+        self.report(TargetEvent::FocusDetail {
+            mode: mode.into(),
+            detail: detail.into(),
+        });
     }
 
     pub fn key(&self, code: u32, down: bool) {

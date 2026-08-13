@@ -86,7 +86,7 @@ DISPLAY=:0 xdotool windowactivate --sync $W 2>&1
 sleep 1
 # Hold LEFTSHIFT (42) via the protocol; let the X server attach to the
 # new uinput device, then SIGKILL the client.
-python3 ./payload/courts/fk-client.py --socket /tmp/ferrokeyd.sock handshake key-down 42 --hold 60 >/tmp/client.log 2>&1 &
+python3 ./payload/courts/fk-client.py --socket /run/ferrokeyd/ferrokeyd.sock handshake key-down 42 --hold 60 >/tmp/client.log 2>&1 &
 CLIENT=$!
 sleep 6
 echo "=== xinput list ==="

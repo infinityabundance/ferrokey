@@ -25,12 +25,15 @@
 //! `PremultipliedRgbaColor` is memory-ordered R,G,B,A, so one R/B swap pass
 //! is needed (and the alpha byte is dropped at depth 24).
 
+use crate::touch::TouchTracker;
 use crate::{PointerButton, Surface, SurfaceBackend, SurfaceError, SurfaceEvent};
 use std::collections::VecDeque;
 use std::time::Duration;
 
 use x11rb::connection::Connection;
 use x11rb::properties::WmHints;
+use x11rb::protocol::xinput;
+use x11rb::protocol::xinput::ConnectionExt as XInputConnectionExt;
 use x11rb::protocol::xproto::{
     AtomEnum, ConnectionExt as XProtoConnectionExt, CreateWindowAux, EventMask, ImageFormat,
     PropMode, WindowClass,
@@ -80,6 +83,9 @@ pub struct X11Surface {
     pending_events: VecDeque<SurfaceEvent>,
     visible: bool,
     ready: bool,
+    /// Active touch tracking (single-pointer fallback: only the first touch
+    /// is forwarded, which matches Slint's single-pointer model).
+    touches: TouchTracker,
 }
 
 impl X11Surface {
@@ -173,7 +179,7 @@ impl X11Surface {
             .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
 
         let depth = screen.root_depth;
-        Ok(X11Surface {
+        let mut surface = X11Surface {
             conn,
             screen_num,
             window,
@@ -184,7 +190,76 @@ impl X11Surface {
             pending_events: VecDeque::new(),
             visible: false,
             ready: false,
-        })
+            touches: TouchTracker::new(),
+        };
+        surface.init_xi2_touch()?;
+        Ok(surface)
+    }
+
+    /// Select XInput2 touch events on the window's master devices.
+    ///
+    /// Touchscreens (INPUT_PROP_DIRECT devices) deliver touch only through
+    /// XI2; there is no core-event equivalent. The mouse and pen keep flowing
+    /// through the core pointer masks, so no events are duplicated. Failure is
+    /// non-fatal: the OSK simply falls back to pointer-only input (a
+    /// touchscreen without XI2 is unusable anyway, but the surface still
+    /// works for the mouse).
+    fn init_xi2_touch(&mut self) -> Result<(), SurfaceError> {
+        // XIAllMasterDevices: touch is delivered on the master device.
+        const XI_ALL_MASTER_DEVICES: u16 = 1;
+        let version = self
+            .conn
+            .xinput_xi_query_version(2, 0)
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+            .reply()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        if version.major_version < 2 {
+            log::info!(
+                "X11 backend: XInput2 unavailable (major {}); touch disabled",
+                version.major_version
+            );
+            return Ok(());
+        }
+        let masks = [xinput::EventMask {
+            deviceid: XI_ALL_MASTER_DEVICES,
+            mask: vec![
+                xinput::XIEventMask::TOUCH_BEGIN,
+                xinput::XIEventMask::TOUCH_UPDATE,
+                xinput::XIEventMask::TOUCH_END,
+            ],
+        }];
+        match self
+            .conn
+            .xinput_xi_select_events(self.window, &masks)
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?
+            .check()
+        {
+            Ok(()) => {
+                log::info!("X11 backend: XInput2 touch selection active");
+            }
+            Err(e) => {
+                log::warn!("X11 backend: XInput2 touch selection failed: {e}");
+            }
+        }
+        Ok(())
+    }
+
+    fn touch_down(&mut self, id: u32, x: f64, y: f64) {
+        if let Some(event) = self.touches.down(id, x, y) {
+            self.pending_events.push_back(event);
+        }
+    }
+
+    fn touch_move(&mut self, id: u32, x: f64, y: f64) {
+        if let Some(event) = self.touches.move_to(id, x, y) {
+            self.pending_events.push_back(event);
+        }
+    }
+
+    fn touch_up(&mut self, id: u32, x: f64, y: f64) {
+        for event in self.touches.up(id, x, y) {
+            self.pending_events.push_back(event);
+        }
     }
 
     fn set_ewmh(conn: &RustConnection, window: u32) -> Result<(), SurfaceError> {
@@ -270,6 +345,16 @@ impl X11Surface {
                     x: f64::from(e.event_x),
                     y: f64::from(e.event_y),
                 });
+            }
+            // XInput2 touch (touchscreens; only reachable through XI2).
+            Event::XinputTouchBegin(e) => {
+                self.touch_down(e.detail, fp1616(e.event_x), fp1616(e.event_y));
+            }
+            Event::XinputTouchUpdate(e) => {
+                self.touch_move(e.detail, fp1616(e.event_x), fp1616(e.event_y));
+            }
+            Event::XinputTouchEnd(e) => {
+                self.touch_up(e.detail, fp1616(e.event_x), fp1616(e.event_y));
             }
             Event::Expose(_) => {
                 self.ready = true;
@@ -457,5 +542,25 @@ impl Drop for X11Surface {
     fn drop(&mut self) {
         let _ = self.conn.destroy_window(self.window);
         let _ = self.conn.flush();
+    }
+}
+
+/// Convert an XInput2 16.16 fixed-point coordinate to physical pixels.
+fn fp1616(v: xinput::Fp1616) -> f64 {
+    f64::from(v) / 65536.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fp1616_conversion() {
+        // 1.5 in 16.16 fixed point is 0x18000.
+        assert!((fp1616(0x0001_8000) - 1.5).abs() < 1e-6);
+        // 100.25 → 0x6404000.
+        assert!((fp1616(0x0064_4000) - 100.25).abs() < 1e-6);
+        // Negative coordinates (offscreen) must stay sane.
+        assert!(fp1616(-0x0001_0000) < 0.0);
     }
 }

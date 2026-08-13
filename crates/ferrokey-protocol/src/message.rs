@@ -4,14 +4,24 @@
 //! few thousand lines needs to stay auditable:
 //!
 //! ```text
-//! FK01
-//!   HELLO            client handshake (protocol version, client name)
-//!   CREATE_KEYBOARD  request device creation
-//!   KEY_DOWN u16     key code
-//!   KEY_UP u16       key code
-//!   RELEASE_ALL      emergency release
-//!   PING u32         heartbeat (server replies PONG)
+//! FK02
+//!   HELLO          client handshake (protocol version, client name)
+//!   OPEN_SESSION   logical client session only — NO kernel device creation
+//!   KEY_DOWN u16   key code
+//!   KEY_UP u16     key code
+//!   RELEASE_ALL    emergency release
+//!   PING u32       heartbeat (server replies PONG)
 //! ```
+//!
+//! Phase 3 security model (kernel attack-surface hardening):
+//!
+//! * `OPEN_SESSION` establishes *client logical state only*. The kernel
+//!   virtual keyboard is created exactly once, by the bootstrap component
+//!   (`ferrokeyd init`) *before* any hostile input is accepted. Untrusted
+//!   clients can never drive kernel device lifecycle creation.
+//! * The protocol is deliberately boring: no JSON, no plugins, no reflection,
+//!   no dynamic method names, no scripting. Fixed binary frames with a magic,
+//!   a version, an opcode and a bounded payload.
 //!
 //! Messages are transported in length-prefixed frames; see [`crate::codec`].
 
@@ -19,7 +29,11 @@
 pub const MAGIC: &[u8; 4] = b"FK01";
 
 /// The current protocol version.
-pub const PROTOCOL_VERSION: u8 = 1;
+///
+/// Version 2: `CREATE_KEYBOARD` became `OPEN_SESSION` — a purely logical
+/// client-side handshake step. Kernel device creation is an initialization
+/// responsibility of the broker bootstrap, never a client RPC.
+pub const PROTOCOL_VERSION: u8 = 2;
 
 /// Maximum accepted frame payload length (defends against hostile lengths).
 /// The largest legitimate message is `HELLO`/`ERROR` with a 256-byte string
@@ -33,7 +47,8 @@ pub const MAX_FRAME_LEN: usize = 4096;
 pub enum Opcode {
     // Client → server
     Hello = 0x01,
-    CreateKeyboard = 0x02,
+    /// Open a *logical* client session. Never creates a kernel device.
+    OpenSession = 0x02,
     KeyDown = 0x10,
     KeyUp = 0x11,
     ReleaseAll = 0x12,
@@ -52,7 +67,7 @@ impl Opcode {
     pub const fn from_u8(v: u8) -> Option<Opcode> {
         match v {
             0x01 => Some(Opcode::Hello),
-            0x02 => Some(Opcode::CreateKeyboard),
+            0x02 => Some(Opcode::OpenSession),
             0x10 => Some(Opcode::KeyDown),
             0x11 => Some(Opcode::KeyUp),
             0x12 => Some(Opcode::ReleaseAll),
@@ -71,8 +86,10 @@ impl Opcode {
 pub enum Message {
     /// Client greeting: protocol version + human-readable client name.
     Hello { version: u8, client_name: String },
-    /// Request creation of the virtual keyboard.
-    CreateKeyboard,
+    /// Open a logical client session against the broker's single pre-created
+    /// virtual keyboard. This establishes client state only: no kernel
+    /// device is created, configured or destroyed by this message.
+    OpenSession,
     /// Press a key (linux input code).
     KeyDown(u16),
     /// Release a key (linux input code).
@@ -99,20 +116,24 @@ pub enum ErrorCode {
     VersionMismatch = 0x0001,
     /// Peer credentials failed SO_PEERCRED validation.
     Unauthorized = 0x0002,
-    /// Device creation failed.
+    /// The broker's kernel device failed an operation.
     DeviceError = 0x0003,
     /// A key code outside the explicit capability set.
     UnknownKey = 0x0004,
-    /// Impossible key transition (e.g. KEY_UP without KEY_DOWN).
+    /// Impossible key transition (e.g. KEY_UP without KEY_DOWN, or a
+    /// duplicate key-down of a key already held by another session).
     InvalidKeyState = 0x0005,
     /// Message rate limit exceeded.
     RateLimited = 0x0006,
     /// Malformed frame.
     Malformed = 0x0007,
-    /// The keyboard was already created (duplicate CREATE_KEYBOARD).
+    /// Duplicate OPEN_SESSION (the session is already open).
     AlreadyCreated = 0x0008,
     /// Server is shutting down.
     ShuttingDown = 0x0009,
+    /// The handshake is incomplete for the requested operation
+    /// (e.g. HELLO or OPEN_SESSION must precede KEY_DOWN).
+    Handshake = 0x000A,
     /// Unspecified internal error.
     Internal = 0x00FF,
 }
@@ -129,6 +150,7 @@ impl ErrorCode {
             0x0007 => Some(ErrorCode::Malformed),
             0x0008 => Some(ErrorCode::AlreadyCreated),
             0x0009 => Some(ErrorCode::ShuttingDown),
+            0x000A => Some(ErrorCode::Handshake),
             0x00FF => Some(ErrorCode::Internal),
             _ => None,
         }
@@ -150,7 +172,7 @@ mod tests {
     fn opcodes_round_trip() {
         for op in [
             Opcode::Hello,
-            Opcode::CreateKeyboard,
+            Opcode::OpenSession,
             Opcode::KeyDown,
             Opcode::KeyUp,
             Opcode::ReleaseAll,
@@ -178,6 +200,7 @@ mod tests {
             ErrorCode::Malformed,
             ErrorCode::AlreadyCreated,
             ErrorCode::ShuttingDown,
+            ErrorCode::Handshake,
             ErrorCode::Internal,
         ] {
             assert_eq!(ErrorCode::from_u16(code.code()), Some(code));
@@ -188,6 +211,6 @@ mod tests {
     #[test]
     fn magic_and_limits() {
         assert_eq!(MAGIC, b"FK01");
-        assert_eq!(PROTOCOL_VERSION, 1);
+        assert_eq!(PROTOCOL_VERSION, 2);
     }
 }

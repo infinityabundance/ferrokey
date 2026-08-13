@@ -32,8 +32,11 @@ for path in receipts:
 
 # Compatibility matrix (rule 47): unknown stays unknown.
 matrix_rows = {}
-order = ["uinput", "permissions", "x11", "focus", "crash", "repeat",
+order = ["kernel-security", "systemd", "soak", "mutation",
+         "uinput", "permissions", "x11", "focus", "crash", "repeat",
          "modifiers", "layouts", "applications", "wayland", "xwayland",
+         "dead-keys", "text-mode", "touch", "altgr", "full-desktop",
+         "sdl", "terminal", "firefox", "chromium", "electron",
          "build", "core"]
 for r in results:
     court = r.get("court", "?")

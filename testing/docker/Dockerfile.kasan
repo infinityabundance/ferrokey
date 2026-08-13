@@ -1,0 +1,47 @@
+# §66–§68: a Linux kernel built with KASAN + UBSAN + LOCKDEP + debug options,
+# used by the kernel-debug court to attack the exact kernel path Ferrokey
+# reaches. Built ONCE and cached in the ferrokey-kasan-kernel volume (the
+# build is slow; the court itself never rebuilds it).
+FROM debian:12
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential flex bison bc libssl-dev libelf-dev xz-utils kmod cpio curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# The longterm 6.1 series matches the Debian 12 cloud image the courts use.
+ARG KVER=6.1.182
+WORKDIR /build
+RUN curl -fL "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KVER}.tar.xz" | tar -xJ \
+    && mv "linux-${KVER}" linux
+
+WORKDIR /build/linux
+# defconfig + the court-relevant options. KASAN/UBSAN/LOCKDEP and the debug
+# list/object checks instrument the exact input/uinput path Ferrokey reaches;
+# virtio-blk/net, ext4, devtmpfs, uinput and evdev are built in so the cloud
+# image rootfs boots by DIRECT -kernel boot (no initrd needed).
+RUN make defconfig && \
+    scripts/config \
+        --enable KASAN --enable KASAN_INLINE --enable KASAN_GENERIC \
+        --enable UBSAN --enable UBSAN_SANITIZE_ALL \
+        --enable PROVE_LOCKING --enable LOCKDEP \
+        --enable DEBUG_LIST --enable DEBUG_SG --enable DEBUG_OBJECTS \
+        --enable SLUB_DEBUG --enable DEBUG_KERNEL \
+        --enable VIRTIO --enable VIRTIO_PCI --enable VIRTIO_BLK --enable VIRTIO_NET \
+        --enable EXT4_FS --enable INPUT_UINPUT --enable INPUT_EVDEV --enable DEVTMPFS \
+        --enable TMPFS --enable IKCONFIG --enable IKCONFIG_PROC \
+        --disable DEBUG_INFO \
+    && make olddefconfig
+
+RUN make -j"$(nproc)" bzImage
+
+RUN mkdir -p /artifacts && cp arch/x86/boot/bzImage /artifacts/bzImage \
+    && cp .config /artifacts/config \
+    && cp System.map /artifacts/System.map \
+    # Fail the build if any required instrumentation/symbol is missing — the
+    # court must never silently run against an un-instrumented kernel.
+    && grep -q "CONFIG_INPUT_UINPUT=y" /artifacts/config \
+    && grep -q "CONFIG_KASAN=y" /artifacts/config \
+    && grep -q "CONFIG_UBSAN=y" /artifacts/config \
+    && grep -q "CONFIG_PROVE_LOCKING=y" /artifacts/config \
+    && grep -q "CONFIG_VIRTIO_BLK=y" /artifacts/config \
+    && grep -q "CONFIG_EXT4_FS=y" /artifacts/config

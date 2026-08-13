@@ -1,8 +1,12 @@
 // key.slint — a single OSK key.
 //
-// Pure UI: the key reports raw pointer-down / pointer-up through `pressed`
-// and `released`. All semantics (modifiers, sticky keys, repeat) live in
-// ferrokey-core; nothing here knows about layouts beyond the display label.
+// Purely visual: the key reports pointer-down / pointer-up only to light the
+// cap (`down`). Key STATE is owned by the Rust pointer bridge in src/main.rs
+// (rules 18, 85): Slint's TouchArea grabs the pointer on press, so while one
+// key is held a second press would route to the grabber instead of its own
+// key — chords would be impossible if semantics lived here. The bridge
+// hit-tests raw surface events against the view geometry and drives
+// key-pressed/key-released directly; this component just renders.
 
 export struct KeyData {
     /// Physical key name (see ferrokey-core PhysicalKey::name).
@@ -15,12 +19,11 @@ export struct KeyData {
 
 export component Key inherits Rectangle {
     in property <KeyData> key-data: { name: "", label: "", width: 1.0 };
-    callback pressed;
-    callback released;
+    in property <length> base-width: 58px;
 
     property <bool> down: false;
 
-    width: max(44px, key-data.width * 58px);
+    width: max(24px, key-data.width * root.base-width);
     height: 52px;
     border-radius: 8px;
     background: down ? #4a7fb8 : #262b33;
@@ -39,14 +42,20 @@ export component Key inherits Rectangle {
         letter-spacing: 0.5px;
     }
 
+    // Visual feedback only — never the semantic path (see the header note).
+    // Left button + touch (mapped to Left by the adapter) light the cap;
+    // middle/right presses (chord tool in the SDL court) must not disturb a
+    // held key's visual state, and a cancel clears it.
     TouchArea {
         pointer-event(ev) => {
-            if (ev.kind == PointerEventKind.down) {
-                root.down = true;
-                root.pressed();
-            } else if (ev.kind == PointerEventKind.up) {
+            if (ev.kind == PointerEventKind.cancel) {
                 root.down = false;
-                root.released();
+            } else if (ev.button == PointerEventButton.left) {
+                if (ev.kind == PointerEventKind.down) {
+                    root.down = true;
+                } else if (ev.kind == PointerEventKind.up) {
+                    root.down = false;
+                }
             }
         }
     }

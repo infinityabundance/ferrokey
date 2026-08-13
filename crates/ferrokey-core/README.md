@@ -18,6 +18,10 @@ client that talks to `ferrokeyd`).
   kernel filters for held keys).
 - **Layouts** — a `Layout` maps physical keys to symbols (primary / shifted /
   altgr / shift+altgr / Fn), with a repeat policy per key.
+- **Dead keys and compose sequences** — [`compose::ComposeEngine`] implements
+  the classic X11 compose table: `' + e → é`, `~ + n → ñ`, the compose key
+  (`compose o c → ©`), standalone accents, and accent-drop semantics for
+  non-composing characters. Pure and deterministic.
 - **Actions and text input** — `KeyAction::{Down, Up, Tap, ReleaseAll}` plus
   a best-effort text channel that is never silently replaced with clipboard
   paste.

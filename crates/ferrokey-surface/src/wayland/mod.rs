@@ -46,11 +46,18 @@ pub struct WlState {
     pub pending_size: (u32, u32),
     pub scale: i32,
     pub visible: bool,
+    // Last known touch position (wl_touch::Up carries no coordinates).
+    pub last_touch: Option<(f64, f64)>,
+    // Last known pointer position (wl_pointer::Button carries no
+    // coordinates; the compositor always sends Motion before Button).
+    pub last_pointer: Option<(f64, f64)>,
     // wl_shm buffer pool
     pub buffer: Option<wl_buffer::WlBuffer>,
     pub backing: Option<File>,
     pub pool_size: usize,
     pub shm_format: wl_shm::Format,
+    /// Formats advertised by the compositor (wl_shm::Format events).
+    pub shm_formats: Vec<wl_shm::Format>,
 }
 
 impl WlState {
@@ -70,10 +77,33 @@ impl WlState {
             pending_size: (0, 0),
             scale: 1,
             visible: false,
+            last_touch: None,
+            last_pointer: None,
             buffer: None,
             backing: None,
             pool_size: 0,
             shm_format: wl_shm::Format::Abgr8888,
+            shm_formats: Vec::new(),
+        }
+    }
+
+    /// Choose the buffer format from what the compositor advertises. The
+    /// software renderer emits R,G,B,A bytes which match `ABGR8888` memory
+    /// order exactly; `ARGB8888`/`XRGB8888` need a per-pixel R↔B swap. Some
+    /// compositors (KWin) reject `ABGR8888` entirely, so never hardcode it.
+    fn pick_format(&mut self) {
+        for preferred in [
+            wl_shm::Format::Abgr8888,
+            wl_shm::Format::Argb8888,
+            wl_shm::Format::Xrgb8888,
+        ] {
+            if self.shm_formats.contains(&preferred) {
+                self.shm_format = preferred;
+                return;
+            }
+        }
+        if let Some(first) = self.shm_formats.first() {
+            self.shm_format = *first;
         }
     }
 
@@ -136,6 +166,8 @@ impl WaylandSurface {
         queue
             .roundtrip(&mut state)
             .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        state.pick_format();
+        log::info!("wayland shm format: {:?}", state.shm_format);
         state.bind_input(&qh);
 
         Ok(WaylandSurface {
@@ -239,21 +271,35 @@ impl Surface for WaylandSurface {
             self.state.backing = Some(backing);
             self.state.pool_size = bytes;
         }
-        // Copy pixels into the shared buffer. PremultipliedRgbaColor memory
-        // order R,G,B,A == wl_shm ABGR8888; no conversion needed.
+        // Copy pixels into the shared buffer. The software renderer emits
+        // R,G,B,A bytes; ABGR8888 matches that memory order exactly, any
+        // other format (ARGB8888/XRGB8888) needs a per-pixel R↔B swap.
         if let Some(backing) = &mut self.state.backing {
             backing
                 .seek(SeekFrom::Start(0))
                 .map_err(|e| SurfaceError::Io(e.to_string()))?;
-            backing
-                .write_all(&buffer[..bytes])
-                .map_err(|e| SurfaceError::Io(e.to_string()))?;
+            // The renderer emits R,G,B,A bytes: ABGR8888 matches directly,
+            // ARGB8888/XRGB8888 need a per-pixel R↔B swap.
+            if self.state.shm_format == wl_shm::Format::Abgr8888 {
+                backing
+                    .write_all(&buffer[..bytes])
+                    .map_err(|e| SurfaceError::Io(e.to_string()))?;
+            } else {
+                let mut swapped = buffer.to_vec();
+                for px in swapped.chunks_exact_mut(4) {
+                    px.swap(0, 2);
+                }
+                backing
+                    .write_all(&swapped)
+                    .map_err(|e| SurfaceError::Io(e.to_string()))?;
+            }
         }
         let surface = self.state.surface.as_ref().unwrap().clone();
         let buf = self.state.buffer.as_ref().unwrap().clone();
         surface.attach(Some(&buf), 0, 0);
         surface.damage_buffer(0, 0, width as i32, height as i32);
         surface.commit();
+        log::debug!("layer surface presented: {width}x{height}");
         self.conn
             .flush()
             .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
@@ -281,6 +327,13 @@ impl Surface for WaylandSurface {
         let deadline = timeout.map(|t| std::time::Instant::now() + t);
         loop {
             self.state.bind_input(&self.qh());
+            // The Wayland read path does NOT flush outgoing requests, so
+            // without an explicit flush here the compositor never sees our
+            // layer-surface creation/commit requests: the surface is never
+            // configured or mapped and the OSK silently never appears.
+            self.conn
+                .flush()
+                .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
             self.queue
                 .dispatch_pending(&mut self.state)
                 .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
@@ -374,10 +427,11 @@ impl Dispatch<wl_shm::WlShm, ()> for WlState {
         _c: &Connection,
         _q: &QueueHandle<WlState>,
     ) {
-        if let wl_shm::Event::Format { format } = e {
-            if format == WEnum::Value(wl_shm::Format::Abgr8888) {
-                s.shm_format = wl_shm::Format::Abgr8888;
-            }
+        if let wl_shm::Event::Format {
+            format: WEnum::Value(f),
+        } = e
+        {
+            s.shm_formats.push(f);
         }
     }
 }
@@ -415,7 +469,23 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WlState {
         _q: &QueueHandle<WlState>,
     ) {
         match e {
+            wl_pointer::Event::Enter {
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                // KWin's x11 backend delivers the position on Enter and may
+                // not send Motion before Button, so record Enter coordinates
+                // too (wl_pointer::Button carries none).
+                s.last_pointer = Some((surface_x, surface_y));
+                log::debug!("layer pointer enter at ({surface_x:.0},{surface_y:.0})");
+                s.events.push_back(SurfaceEvent::PointerMoved {
+                    x: surface_x,
+                    y: surface_y,
+                });
+            }
             wl_pointer::Event::Leave { .. } => {
+                s.last_pointer = None;
                 s.events.push_back(SurfaceEvent::PointerLeft);
             }
             wl_pointer::Event::Motion {
@@ -423,6 +493,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WlState {
                 surface_y,
                 ..
             } => {
+                s.last_pointer = Some((surface_x, surface_y));
+                log::debug!("layer pointer motion at ({surface_x:.0},{surface_y:.0})");
                 s.events.push_back(SurfaceEvent::PointerMoved {
                     x: surface_x,
                     y: surface_y,
@@ -435,20 +507,19 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WlState {
                     0x112 => PointerButton::Right,
                     _ => return,
                 };
+                // wl_pointer::Button carries no coordinates; the compositor
+                // always precedes it with a Motion, so use the last position
+                // (falling back to 0,0 only if no motion was ever seen).
+                let (x, y) = s.last_pointer.unwrap_or((0.0, 0.0));
+                log::debug!("layer pointer button {button:?} at ({x:.0},{y:.0})");
                 match state {
                     WEnum::Value(wl_pointer::ButtonState::Pressed) => {
-                        s.events.push_back(SurfaceEvent::PointerPressed {
-                            x: 0.0,
-                            y: 0.0,
-                            button,
-                        });
+                        s.events
+                            .push_back(SurfaceEvent::PointerPressed { x, y, button });
                     }
                     WEnum::Value(wl_pointer::ButtonState::Released) => {
-                        s.events.push_back(SurfaceEvent::PointerReleased {
-                            x: 0.0,
-                            y: 0.0,
-                            button,
-                        });
+                        s.events
+                            .push_back(SurfaceEvent::PointerReleased { x, y, button });
                     }
                     _ => {}
                 }
@@ -469,21 +540,27 @@ impl Dispatch<wl_touch::WlTouch, ()> for WlState {
     ) {
         match e {
             wl_touch::Event::Down { x, y, .. } => {
-                s.events.push_back(SurfaceEvent::PointerPressed {
-                    x,
-                    y,
-                    button: PointerButton::Left,
-                });
+                log::debug!("layer touch down at ({x:.0},{y:.0})");
+                s.last_touch = Some((x, y));
+                s.events.push_back(SurfaceEvent::TouchPressed { x, y });
             }
             wl_touch::Event::Up { .. } => {
-                s.events.push_back(SurfaceEvent::PointerReleased {
-                    x: 0.0,
-                    y: 0.0,
-                    button: PointerButton::Left,
-                });
+                log::debug!("layer touch up");
+                // wl_touch::Up carries no coordinates; replay the last known
+                // position so hit-testing state stays consistent.
+                let (x, y) = s.last_touch.unwrap_or((0.0, 0.0));
+                s.last_touch = None;
+                s.events.push_back(SurfaceEvent::TouchReleased { x, y });
             }
             wl_touch::Event::Motion { x, y, .. } => {
-                s.events.push_back(SurfaceEvent::PointerMoved { x, y });
+                log::debug!("layer touch motion at ({x:.0},{y:.0})");
+                s.last_touch = Some((x, y));
+                s.events.push_back(SurfaceEvent::TouchMoved { x, y });
+            }
+            wl_touch::Event::Cancel => {
+                log::debug!("layer touch cancel");
+                s.last_touch = None;
+                s.events.push_back(SurfaceEvent::TouchCancelled);
             }
             _ => {}
         }
@@ -539,6 +616,7 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for WlState {
                 } else {
                     height
                 };
+                log::info!("layer surface configured: {width}x{height}");
                 s.configured = true;
                 s.events.push_back(SurfaceEvent::Resized { width, height });
             }

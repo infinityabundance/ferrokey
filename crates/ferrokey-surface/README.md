@@ -29,7 +29,19 @@ Backends are selected by **capability detection at runtime** — never by
   takes keyboard focus.
 - `x11` (default) — ICCCM `WM_HINTS.input = False` window plus
   `override_redirect`, so no WM focus policy can hand focus to the OSK.
+  Touchscreens are first-class via XInput2 (XI2 touch selection on the
+  window's master devices); the mouse and pen keep using core events.
 - Correct rendering at every visual depth (16/24/32) with byte-stride frames.
+
+## Touch
+
+Touch is an explicit event family ([`SurfaceEvent::TouchPressed`] and
+friends) rather than synthesized pointer events. The Wayland backend maps
+`wl_touch` onto it; the X11 backend selects XI2 touch on master devices and
+runs the single-pointer fallback in [`touch::TouchTracker`] (only the first
+concurrent touch is forwarded, matching Slint's pointer model). The Slint
+adapter maps touch events to left-button pointer events, so a touchscreen
+tap and a click behave identically inside the `.slint` UI.
 
 ## License
 

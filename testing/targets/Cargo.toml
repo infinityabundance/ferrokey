@@ -7,6 +7,8 @@ members = [
     "slint",
     "gtk",
     "virtinput",
+    "sdl",
+    "layer-probe",
 ]
 # Note: the Qt target is a C++/CMake app (testing/targets/qt) built in the
 # targets Docker image; it has no Cargo manifest.

@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # UINPUT.001 / UINPUT.002 / UINPUT.003: real guest-kernel uinput courts (rule 9).
 #
-# Proves inside the guest:
+# Proves inside the guest (Phase 3):
 #   * /dev/uinput exists with expected permissions
 #   * the unprivileged court user cannot open it directly
-#   * ferrokeyd (the only privileged component) creates a real virtual
-#     keyboard visible in /proc/bus/input/devices
+#   * the daemon creates exactly ONE virtual keyboard at startup (bootstrap),
+#     visible in /proc/bus/input/devices before any client connects (§8, §10)
 #   * the device advertises exactly the explicit capability set
 #   * key-down/key-up flows produce kernel events (verified via evtest)
 #   * RELEASE_ALL releases everything
-#   * device disappears when the daemon stops
+#   * the device disappears when the daemon stops
 set -euo pipefail
 source "$(dirname "$0")/../lib.sh"
 
+SOCK=/run/ferrokeyd/ferrokeyd.sock
 capture_devices
 
 # ── UINPUT.001: baseline ──────────────────────────────────────────────────
@@ -33,28 +34,25 @@ else
     ok "unprivileged user cannot open /dev/uinput"
 fi
 
-# ── Start the daemon and create the device via the protocol ───────────────
+# ── Start the daemon (supervisor + bootstrap + runtime broker) ─────────────
 start_ferrokeyd
 
-# A background client runs the full protocol flow (handshake, KEY_DOWN 30,
-# KEY_UP 30, RELEASE_ALL) and then HOLDS the connection open, so the virtual
-# keyboard stays registered while we capture device evidence.
-python3 "$PAYLOAD/courts/fk-client.py" --socket /tmp/ferrokeyd.sock \
-    handshake key-down 30 key-up 30 release-all --hold 25 \
-    > "$OUT/fk-client.log" 2>&1 &
-FKCLIENT_PID=$!
-
-sleep 2
+# The virtual keyboard must already exist — created by the bootstrap
+# component at startup, BEFORE any client connects (§8).
 capture_devices
 
 if grep -q "Ferrokey Virtual Keyboard" "$OUT/devices.txt"; then
-    ok "virtual keyboard registered in /proc/bus/input/devices"
+    ok "virtual keyboard registered at daemon start (single device)"
 else
     bad "virtual keyboard NOT found in /proc/bus/input/devices"
     cat "$OUT/devices.txt"
-    cat "$OUT/fk-client.log"
+    cat "$OUT/ferrokeyd.log"
     finish_court FAIL "court" "uinput.002"
 fi
+
+# Exactly one Ferrokey device must exist (no per-client devices, §10).
+FERROKEY_COUNT=$(grep -c "Name=\"Ferrokey Virtual Keyboard\"" "$OUT/devices.txt" || true)
+assert_eq "exactly one Ferrokey virtual keyboard" "$FERROKEY_COUNT" "1"
 
 # Capability evidence: the device must list EV_KEY with a bounded, explicit
 # set (never the full 0..767 key space).
@@ -75,9 +73,9 @@ fi
 if command -v evtest >/dev/null 2>&1; then
     EVENT_NODE=$(ls /dev/input/event* 2>/dev/null | tail -1)
     if [ -n "$EVENT_NODE" ]; then
-        # Tap 'a' (code 30) on a second connection (a second virtual device)
-        # while evtest grabs the newest node.
-        ( python3 "$PAYLOAD/courts/fk-client.py" --socket /tmp/ferrokeyd.sock \
+        # Tap 'a' (code 30) while evtest grabs the newest node (the Ferrokey
+        # device, created at daemon start).
+        ( python3 "$PAYLOAD/courts/fk-client.py" --socket "$SOCK" \
             handshake key-down 30 key-up 30 release-all >/dev/null ) &
         timeout 3 sudo -u root evtest --grab "$EVENT_NODE" > "$OUT/evtest.log" 2>&1 || true
         sleep 1
@@ -91,18 +89,9 @@ if command -v evtest >/dev/null 2>&1; then
     fi
 fi
 
-# The background client's protocol flow must have completed successfully
-# (it exits 0 only if handshake + release-all got OK replies).
-if wait "$FKCLIENT_PID"; then
-    ok "protocol flow (handshake/keys/release-all) succeeded"
-else
-    bad "protocol flow failed"
-    cat "$OUT/fk-client.log"
-fi
-
 # ── UINPUT.003: device disappears with the daemon (rule 42 negative case) ─
 sudo kill "$FERROKEYD_PID" 2>/dev/null || true
-sleep 1
+sleep 2
 capture_devices
 if grep -q "Ferrokey Virtual Keyboard" "$OUT/devices.txt"; then
     bad "device still registered after daemon exit"

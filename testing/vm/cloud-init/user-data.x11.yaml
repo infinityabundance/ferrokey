@@ -26,6 +26,7 @@ packages:
   - fonts-dejavu-core
   - evtest
   - libinput-tools
+  - xinput
   - procps
   - curl
   - jq
@@ -33,6 +34,24 @@ packages:
   - libqt6widgets6
   - openbox
   - strace
+  - libxkbcommon0
+  - xkb-data
+  - xserver-xorg-input-libinput
+  - libsdl2-2.0-0
+  - xclip
+  # wmctrl: EWMH window control. The browser courts unmaximize + reposition
+  # the target window below the OSK (xdotool's windowmove is ignored on
+  # maximized windows, and its --sync would block forever waiting for a
+  # move the WM refuses).
+  - wmctrl
+  # TUI stack for the TERM.TUI court (addendum #2): real terminal
+  # applications as the PTY child. vim-tiny is the gate — a broken PTY
+  # makes vim print "Vim: Warning: Output is not to a terminal" and
+  # degrade; less/htop/tmux round out the real-app matrix.
+  - vim-tiny
+  - less
+  - htop
+  - tmux
 
 write_files:
   # Headless courts: let any local user start the dummy-driver X server

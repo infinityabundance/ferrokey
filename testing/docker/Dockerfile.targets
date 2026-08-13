@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ninja-build \
         fonts-dejavu-core \
         ca-certificates \
+        gcc \
+        linux-libc-dev \
+        libsdl2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 ENV DISPLAY="" WAYLAND_DISPLAY="" XDG_RUNTIME_DIR="/tmp" \

@@ -1,7 +1,7 @@
 [package]
 name = "ferrokeyd"
-description = "Ferrokey daemon: privileged broker owning /dev/uinput, authenticated over a Unix socket"
-version = "0.1.2"
+description = "Ferrokey daemon: constrained broker owning one pre-created /dev/uinput keyboard, authenticated over a Unix socket"
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -12,8 +12,38 @@ readme = "README.md"
 name = "ferrokeyd"
 path = "src/main.rs"
 
-[lints]
-workspace = true
+# Workspace lints are not inherited here: Phase 3 §82 requires isolated
+# `unsafe` for seccomp, capability/credential manipulation, FD passing and
+# signal handling. Those four modules carry `#[allow(unsafe_code)]` with
+# documented pre/postconditions; the rest of the crate is `deny(unsafe_code)`
+# (set in lib.rs), so any future unsafe outside them fails the build.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+# Mirrors the workspace allow-list (workspace lints cannot be inherited
+# together with a local override).
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+needless_pass_by_value = "allow"
+doc_markdown = "allow"
+too_many_lines = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+module_name_repetitions = "allow"
+struct_field_names = "allow"
+enum_glob_use = "allow"
+wildcard_imports = "allow"
+map_unwrap_or = "allow"
+return_self_not_must_use = "allow"
+unnecessary_wraps = "allow"
+default_constructed_unit_structs = "allow"
+unused_self = "allow"
+manual_let_else = "allow"
 
 [dependencies]
 ferrokey-core.workspace = true
@@ -26,3 +56,5 @@ serde_yaml.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true

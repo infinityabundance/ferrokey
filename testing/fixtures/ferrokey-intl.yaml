@@ -1,0 +1,20 @@
+# ferrokey UI configuration: US International layout, keyboard mode.
+#
+# Used by the altgr court: holding right-alt (AltGr) + tapping a letter must
+# produce the AltGr symbol (é on us-intl) through the desktop keymap.
+layout: us-intl
+socket_path: /run/ferrokeyd/ferrokeyd.sock
+width: 920
+height: 342
+x11_display: ":0"
+sticky:
+  latch_enabled: true
+  lock_enabled: true
+  tap_timeout_ms: 400
+  double_tap_timeout_ms: 500
+repeat:
+  enabled: true
+  delay_ms: 500
+  cadence_ms: 30
+force_degraded_banner: false
+text_mode: false

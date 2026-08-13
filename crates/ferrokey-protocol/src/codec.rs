@@ -60,8 +60,8 @@ fn encode_payload(msg: &Message) -> Result<Vec<u8>, CodecError> {
             out.push(*version);
             push_string(&mut out, client_name)?;
         }
-        Message::CreateKeyboard => {
-            out.push(Opcode::CreateKeyboard as u8);
+        Message::OpenSession => {
+            out.push(Opcode::OpenSession as u8);
         }
         Message::KeyDown(code) => {
             out.push(Opcode::KeyDown as u8);
@@ -122,15 +122,37 @@ impl Decoder {
     /// Feed more bytes. Returns all complete messages that could be parsed,
     /// or a fatal error if the stream is malformed.
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<Message>, CodecError> {
+        // Memory bound (§52): after draining every complete frame, at most
+        // one *partial* frame (header + maximum payload) may remain in
+        // flight. A hostile client streaming endless incomplete frames or
+        // oversized buffers must not grow the decoder without limit. The
+        // bound is enforced on the remainder *after* processing, so a single
+        // large push containing many complete frames (e.g. a flood of tiny
+        // pings read in one 8 KiB read) is fine — the frames drain and the
+        // leftover is bounded.
         self.buf.extend_from_slice(bytes);
-        let mut messages = Vec::new();
-        while let Some(frame_len) = self.frame_len()? {
-            let end = HEADER_LEN + frame_len;
-            let payload = self.buf[HEADER_LEN..end].to_vec();
-            self.buf.drain(..end);
-            messages.push(decode_payload(&payload)?);
+        let result = (|| {
+            let mut messages = Vec::new();
+            while let Some(frame_len) = self.frame_len()? {
+                let end = HEADER_LEN + frame_len;
+                let payload = self.buf[HEADER_LEN..end].to_vec();
+                self.buf.drain(..end);
+                messages.push(decode_payload(&payload)?);
+            }
+            if self.buf.len() > HEADER_LEN + MAX_FRAME_LEN {
+                return Err(CodecError::Malformed(format!(
+                    "stream would exceed the maximum buffered frame size ({} bytes)",
+                    HEADER_LEN + MAX_FRAME_LEN
+                )));
+            }
+            Ok(messages)
+        })();
+        if result.is_err() {
+            // The stream is poisoned; drop any buffered bytes so the decoder
+            // cannot be made to hold attacker-chosen data.
+            self.buf.clear();
         }
-        Ok(messages)
+        result
     }
 
     /// The number of bytes currently buffered (diagnostics).
@@ -204,13 +226,13 @@ fn decode_payload(payload: &[u8]) -> Result<Message, CodecError> {
                 client_name,
             })
         }
-        Opcode::CreateKeyboard => {
+        Opcode::OpenSession => {
             if pos != payload.len() {
                 return Err(CodecError::Malformed(
-                    "trailing bytes after create-keyboard".into(),
+                    "trailing bytes after open-session".into(),
                 ));
             }
-            Ok(Message::CreateKeyboard)
+            Ok(Message::OpenSession)
         }
         Opcode::KeyDown | Opcode::KeyUp | Opcode::KeyRepeat => {
             if payload.len() != 3 {
@@ -295,7 +317,7 @@ mod tests {
             version: 1,
             client_name: "ferrokey".into(),
         });
-        round_trip(&Message::CreateKeyboard);
+        round_trip(&Message::OpenSession);
         round_trip(&Message::KeyDown(30));
         round_trip(&Message::KeyUp(42));
         round_trip(&Message::KeyRepeat(30));
@@ -428,5 +450,121 @@ mod tests {
         frame.extend_from_slice(&(payload.len() as u16).to_le_bytes());
         frame.append(&mut payload);
         assert!(matches!(dec.push(&frame), Err(CodecError::Malformed(_))));
+    }
+
+    #[test]
+    fn partial_frame_stream_cannot_grow_the_buffer_unbounded() {
+        // The classic hostile-input attack: a valid header advertising a
+        // 4 KiB payload, then endless dribbles that never complete it. Each
+        // push must either be buffered within the bound or rejected.
+        let mut dec = Decoder::new();
+        let header = [b'F', b'K', b'0', b'1', 0x00, 0x10]; // len 4096
+        assert_eq!(dec.push(&header).unwrap(), Vec::<Message>::new());
+        let mut delivered = 0usize;
+        for _ in 0..100_000 {
+            match dec.push(&[0xAA]) {
+                Ok(_) => {
+                    delivered += 1;
+                    assert!(
+                        dec.buffered() <= MAX_FRAME_LEN + 6,
+                        "buffer exceeded the bound: {}",
+                        dec.buffered()
+                    );
+                }
+                Err(CodecError::Malformed(_)) => break, // bound enforced
+                Err(e) => panic!("unexpected error: {e}"),
+            }
+        }
+        assert!(delivered > 0);
+    }
+
+    #[test]
+    fn single_push_larger_than_a_frame_is_rejected_without_buffering() {
+        let mut dec = Decoder::new();
+        let huge = vec![0u8; MAX_FRAME_LEN + 32];
+        let err = dec.push(&huge).unwrap_err();
+        assert!(matches!(err, CodecError::Malformed(_)));
+        assert_eq!(dec.buffered(), 0, "hostile push must not be buffered");
+    }
+
+    /// Deterministic hostile-input fuzz over the streaming decoder.
+    ///
+    /// A seeded PRNG (xorshift64*) generates arbitrary byte streams that are
+    /// delivered in random fragmentation patterns. The decoder must never
+    /// panic and must never grow its buffer past the frame bound. This runs
+    /// in ordinary `cargo test` on stable, so the "hostile-input resistant"
+    /// claim is continuously verified even without the nightly cargo-fuzz
+    /// harness (`crates/ferrokey-protocol/fuzz`).
+    #[test]
+    fn hostile_input_never_panics_and_stays_bounded() {
+        fn next(rng: &mut u64) -> u64 {
+            *rng ^= *rng << 13;
+            *rng ^= *rng >> 7;
+            *rng ^= *rng << 17;
+            *rng
+        }
+        let mut rng: u64 = 0x9E37_79B9_7F4A_7C15;
+        // Under Miri the full 50k iterations are impractically slow; the
+        // interpreter catches the same UB classes on a smaller sample (§86).
+        let iters: u64 = if cfg!(miri) { 200 } else { 50_000 };
+        for _ in 0..iters {
+            let mut dec = Decoder::new();
+            let pushes = 1 + (next(&mut rng) % 12) as usize;
+            for _ in 0..pushes {
+                let len = (next(&mut rng) % 96) as usize;
+                let mut bytes = vec![0u8; len];
+                for b in &mut bytes {
+                    *b = (next(&mut rng) >> 24) as u8;
+                }
+                // Malformed input is *expected*; the decoder must return an
+                // error, never panic or over-allocate.
+                let _ = dec.push(&bytes);
+                assert!(
+                    dec.buffered() <= MAX_FRAME_LEN + 6,
+                    "buffer exceeded bound after {} bytes",
+                    dec.buffered()
+                );
+            }
+        }
+    }
+
+    /// Mutated-valid-frames fuzz: take every valid encoded frame and corrupt
+    /// each byte position, ensuring the decoder never panics on the exact
+    /// boundaries of real messages.
+    #[test]
+    fn byte_flip_never_panics() {
+        let samples: Vec<Vec<u8>> = [
+            Message::Hello {
+                version: 1,
+                client_name: "court".into(),
+            },
+            Message::OpenSession,
+            Message::KeyDown(0xFFFF),
+            Message::KeyUp(30),
+            Message::KeyRepeat(30),
+            Message::ReleaseAll,
+            Message::Ping(u32::MAX),
+            Message::Ok,
+            Message::Error(ErrorCode::Unauthorized, "denied".into()),
+        ]
+        .iter()
+        .filter_map(|m| encode(m).ok())
+        .collect();
+        for sample in &samples {
+            for i in 0..sample.len() {
+                for flip in [0x00u8, 0xFF, 0x80] {
+                    let mut mutated = sample.clone();
+                    mutated[i] ^= flip;
+                    let mut dec = Decoder::new();
+                    let _ = dec.push(&mutated);
+                    assert!(dec.buffered() <= MAX_FRAME_LEN + 6);
+                }
+            }
+            // Truncations at every boundary.
+            for cut in 0..sample.len() {
+                let mut dec = Decoder::new();
+                let _ = dec.push(&sample[..cut]);
+            }
+        }
     }
 }

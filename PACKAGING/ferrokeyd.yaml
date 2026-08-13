@@ -1,0 +1,48 @@
+# Production ferrokeyd configuration (Phase 3).
+#
+# SECURITY: this file is the security-boundary configuration (§45). It must be
+# owned by root and mode 0644:
+#   install -m 0644 PACKAGING/ferrokeyd.yaml /etc/ferrokey/ferrokeyd.yaml
+# A user-writable config loaded by the privileged supervisor would let an
+# unprivileged user steer a privileged process; the daemon refuses to load a
+# root-owner config that is group/world-writable when running privileged.
+
+socket_path: /run/ferrokeyd/ferrokeyd.sock
+# The parent directory /run/ferrokeyd must exist, be owned by the `ferrokeyd`
+# service user and NOT be group/world-writable (the daemon validates this,
+# §26). The socket itself is mode 0666 so the desktop UI can connect; the
+# real authority is the SO_PEERCRED whitelist below (§27).
+socket_mode: 438  # 0o666
+
+# Authorized desktop user(s) — the UID of the graphical login session that may
+# drive the on-screen keyboard. Identity comes from the kernel via SO_PEERCRED,
+# never from the client (§27). Keep this list as small as possible (§11, §114).
+# Replace 1000 with the actual desktop user UID.
+allowed_uids: [1000]
+allowed_gids: []
+
+# One UI ↔ one session ↔ one broker (§11). Multiple concurrent clients are only
+# supported when a concrete requirement exists; every additional client
+# multiplies held-key ownership and DoS surface.
+max_connections: 1
+
+# Key-event rate limiting (§77): applied BEFORE expensive work. These bounds are
+# deliberately generous for typing; hostile floods are rejected with an
+# ERROR(RateLimited) frame.
+rate:
+  burst: 200
+  per_second: 200
+
+# Maximum simultaneously-held keys (§24): bounded both here and in the broker
+# (sane constant upper limit). 16 is plenty for even complex chords.
+max_held_keys: 16
+
+# Stable device identity (§50): treat these as ABI-like product properties.
+# The name is truncated to 79 bytes by the kernel ABI; it is fixed at startup
+# and never client-controlled (§49).
+device_name: "Ferrokey Virtual Keyboard"
+
+# The dedicated unprivileged service identity the runtime broker drops to (§3).
+# The supervisor must be privileged enough to setuid/setgid to these values.
+service_user: ferrokeyd
+service_group: ferrokeyd

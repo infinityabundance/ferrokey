@@ -3,7 +3,7 @@
 //! The UI is fully unprivileged. All key events flow to `ferrokeyd` over the
 //! authenticated Unix socket; this type owns the connection lifecycle:
 //!
-//! * connect + handshake (HELLO / CREATE_KEYBOARD) with backoff
+//! * connect + handshake (HELLO / OPEN_SESSION) with backoff
 //! * automatic reconnect when the daemon disappears (daemon restart court)
 //! * reports connection state to the status line
 //!
@@ -75,7 +75,7 @@ impl DaemonLink {
                         version: PROTOCOL_VERSION,
                         client_name: format!("ferrokey/{}", env!("CARGO_PKG_VERSION")),
                     })
-                    .and_then(|()| client.send(&Message::CreateKeyboard));
+                    .and_then(|()| client.send(&Message::OpenSession));
                 match handshake {
                     Ok(()) => {
                         client.set_nonblocking(true).ok();
@@ -163,28 +163,6 @@ impl KeySink for DaemonLink {
 
     fn release_all(&mut self) -> Result<(), SinkError> {
         self.send_message(Message::ReleaseAll)
-    }
-}
-
-/// A `KeySink` over a shared [`DaemonLink`] (newtype: the orphan rule forbids
-/// implementing a foreign trait for `Rc<RefCell<_>>` directly).
-pub struct DaemonLinkSink(pub std::rc::Rc<std::cell::RefCell<DaemonLink>>);
-
-impl KeySink for DaemonLinkSink {
-    fn key_down(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
-        self.0.borrow_mut().key_down(key)
-    }
-
-    fn key_up(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
-        self.0.borrow_mut().key_up(key)
-    }
-
-    fn key_repeat(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
-        self.0.borrow_mut().key_repeat(key)
-    }
-
-    fn release_all(&mut self) -> Result<(), SinkError> {
-        self.0.borrow_mut().release_all()
     }
 }
 

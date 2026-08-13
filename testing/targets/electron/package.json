@@ -1,0 +1,7 @@
+{
+  "name": "ferrokey-test-target-electron",
+  "version": "0.1.0",
+  "description": "Ferrokey court target: minimal Electron app reporting focus, raw key events and input text",
+  "main": "main.js",
+  "private": true
+}

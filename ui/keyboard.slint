@@ -1,23 +1,30 @@
-// keyboard.slint — the OSK itself: six physical rows driven by data models.
+// keyboard.slint — the OSK itself: seven physical rows driven by data models.
 //
 // The row contents (which physical keys, what labels, what widths) are
-// provided from Rust, derived from the active keyboard layout. This file
-// contains zero window/compositor policy — it only renders and reports
-// pointer intents.
+// provided from Rust, derived from the active keyboard *view* (compact /
+// full desktop) and the active layout. This file contains zero
+// window/compositor policy — it only renders.
+//
+// `base-width` is the view's base key width; each KeyData.width is a factor
+// of it, so the same component tree renders every view without recompiling
+// the UI.
+//
+// Key semantics (which key is down/up) do NOT flow through this file: the
+// Rust pointer bridge (src/main.rs) hit-tests raw pointer/touch surface
+// events against the view geometry and drives key-pressed/key-released
+// directly (rules 18, 85). Each Key's TouchArea only lights the cap.
 
 import { Key, KeyData } from "key.slint";
 
 component KeyRow inherits HorizontalLayout {
     in property <[KeyData]> keys: [];
-    callback key-pressed(string);
-    callback key-released(string);
+    in property <length> base-width: 58px;
 
     spacing: 6px;
 
     for k in keys: Key {
         key-data: k;
-        pressed => root.key-pressed(k.name);
-        released => root.key-released(k.name);
+        base-width: root.base-width;
     }
 }
 
@@ -28,10 +35,9 @@ export component Keyboard inherits Rectangle {
     in property <[KeyData]> row4: [];
     in property <[KeyData]> row5: [];
     in property <[KeyData]> row6: [];
+    in property <[KeyData]> row7: [];
     in property <bool> degraded: false;
-
-    callback key-pressed(string);
-    callback key-released(string);
+    in property <length> base-width: 58px;
 
     background: transparent;
 
@@ -39,12 +45,13 @@ export component Keyboard inherits Rectangle {
         padding: 6px;
         spacing: 6px;
 
-        KeyRow { keys: row1; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
-        KeyRow { keys: row2; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
-        KeyRow { keys: row3; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
-        KeyRow { keys: row4; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
-        KeyRow { keys: row5; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
-        KeyRow { keys: row6; key-pressed(name) => root.key-pressed(name); key-released(name) => root.key-released(name); }
+        KeyRow { keys: row1; base-width: root.base-width; }
+        KeyRow { keys: row2; base-width: root.base-width; }
+        KeyRow { keys: row3; base-width: root.base-width; }
+        KeyRow { keys: row4; base-width: root.base-width; }
+        KeyRow { keys: row5; base-width: root.base-width; }
+        KeyRow { keys: row6; base-width: root.base-width; }
+        KeyRow { keys: row7; base-width: root.base-width; }
     }
 
     if root.degraded: Rectangle {

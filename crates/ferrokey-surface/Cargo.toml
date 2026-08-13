@@ -17,7 +17,7 @@ wayland-client.workspace = true
 wayland-protocols.workspace = true
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 wayland-backend.workspace = true
-x11rb.workspace = true
+x11rb = { workspace = true, features = ["xinput"] }
 slint.workspace = true
 log.workspace = true
 thiserror.workspace = true

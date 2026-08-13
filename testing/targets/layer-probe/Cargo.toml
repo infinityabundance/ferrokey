@@ -1,0 +1,18 @@
+[package]
+name = "ferrokey-test-layer-probe"
+description = "Court debug tool: layer surface (keyboard_interactivity=none) reporting pointer/keyboard events"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ferrokey-test-layer-probe"
+path = "src/main.rs"
+
+[dependencies]
+wayland-client.workspace = true
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+log = "0.4"
+
+[lints.rust]
+unsafe_code = "forbid"

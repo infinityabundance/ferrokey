@@ -1,30 +1,14 @@
 //! The daemon's keyboard device abstraction.
 //!
-//! `ferrokeyd` owns the only real `/dev/uinput` device in the system. The
-//! `KeyboardDevice` trait exists so the server logic (auth, protocol, rate
-//! limiting, recovery) can be unit-tested without a kernel.
+//! The broker owns the single pre-created `/dev/uinput` device (transferred
+//! by the bootstrap component). The [`KeyDevice`] trait exists so the
+//! session/protocol logic (auth, state machine, rate limiting, recovery) can
+//! be unit-tested without a kernel — the real implementation wraps
+//! [`ferrokey_uinput::UinputDevice`], which enforces the capability set and
+//! the authoritative held-key ledger (§20, §22).
 
-use ferrokey_core::{KeySink, PhysicalKey};
-use ferrokey_uinput::{DeviceOptions, VirtualKeyboard};
-
-/// A keyboard the daemon can command.
-pub trait KeyboardDevice: std::any::Any {
-    /// Create the device (idempotent; called once per connection).
-    fn create(&mut self) -> Result<(), DeviceError>;
-    fn key_down(&mut self, code: u16) -> Result<(), DeviceError>;
-    fn key_up(&mut self, code: u16) -> Result<(), DeviceError>;
-    /// Autorepeat a held key (`EV_KEY` value=2; not a state transition).
-    fn key_repeat(&mut self, code: u16) -> Result<(), DeviceError>;
-    /// Release every held key (disconnect / crash recovery).
-    fn release_all(&mut self) -> Result<(), DeviceError>;
-    /// The linux key codes this device supports.
-    fn capability_codes(&self) -> &[u32];
-    /// Downcast helper for tests.
-    fn as_any(&self) -> &dyn std::any::Any {
-        // Deliberately not implemented by default: only test doubles need it.
-        panic!("as_any is only implemented on concrete types")
-    }
-}
+use ferrokey_core::PhysicalKey;
+use ferrokey_uinput::UinputDevice;
 
 /// Errors from device operations, mapped onto protocol error codes.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -35,172 +19,220 @@ pub enum DeviceError {
     KeyUpWithoutDown(u16),
     #[error("rollover limit exceeded while pressing {0}")]
     Rollover(u16),
-    #[error("device creation failed: {0}")]
-    Create(String),
+    #[error("key {0} is already held (duplicate down / cross-session ownership)")]
+    KeyBusy(u16),
     #[error("device I/O failed: {0}")]
     Io(String),
 }
 
-/// The real uinput-backed device.
-pub struct UinputKeyboard {
-    inner: Option<VirtualKeyboard>,
-    options: DeviceOptions,
-    capabilities: Vec<u32>,
+/// A keyboard the broker can command — a deliberately *closed* operation set
+/// (§18): only key presses, releases, autorepeats and release-all. No generic
+/// `emit(event_type, code, value)` is exposed to protocol data.
+pub trait KeyDevice {
+    fn key_down(&mut self, key: PhysicalKey) -> Result<(), DeviceError>;
+    fn key_up(&mut self, key: PhysicalKey) -> Result<(), DeviceError>;
+    /// Autorepeat a held key (`EV_KEY` value=2; not a state transition).
+    fn key_repeat(&mut self, key: PhysicalKey) -> Result<(), DeviceError>;
+    /// Release exactly `codes`, fail-safe (§23): every key is attempted even
+    /// if earlier releases fail; all errors are returned.
+    fn release_keys(&mut self, codes: &[u16]) -> Vec<DeviceError>;
+    /// Release every key the device ledger holds, fail-safe.
+    fn release_all(&mut self) -> Vec<DeviceError>;
+    /// The linux key codes this device supports (immutable capability set).
+    fn capability_codes(&self) -> &[u16];
+    /// Whether the code belongs to the immutable capability set (§21).
+    fn is_capable(&self, code: u16) -> bool;
+    /// Whether the device ledger currently holds `code` (§22).
+    fn is_held(&self, code: u16) -> bool;
+    /// Number of keys currently held.
+    fn held_count(&self) -> usize;
 }
 
-impl UinputKeyboard {
-    pub fn new(device_name: &str, max_held_keys: usize) -> Self {
-        UinputKeyboard {
-            inner: None,
-            options: DeviceOptions {
-                name: device_name.to_string(),
-                max_held_keys,
-            },
-            capabilities: ferrokey_uinput::capability_codes(),
-        }
-    }
-}
-
-impl KeyboardDevice for UinputKeyboard {
-    fn create(&mut self) -> Result<(), DeviceError> {
-        if self.inner.is_some() {
-            return Ok(());
-        }
-        let keyboard = VirtualKeyboard::create(self.options.clone())
-            .map_err(|e| DeviceError::Create(e.to_string()))?;
-        log::info!("created uinput device {:?}", keyboard.name());
-        self.inner = Some(keyboard);
-        Ok(())
-    }
-
-    fn key_down(&mut self, code: u16) -> Result<(), DeviceError> {
-        let key =
-            PhysicalKey::from_linux_code(u32::from(code)).ok_or(DeviceError::UnknownKey(code))?;
-        let dev = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| DeviceError::Create("device not created".into()))?;
-        dev.key_down(key)
-            .map_err(|e| classify_sink_error(code, e.to_string()))
-    }
-
-    fn key_up(&mut self, code: u16) -> Result<(), DeviceError> {
-        let key =
-            PhysicalKey::from_linux_code(u32::from(code)).ok_or(DeviceError::UnknownKey(code))?;
-        let dev = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| DeviceError::Create("device not created".into()))?;
-        dev.key_up(key)
-            .map_err(|e| classify_sink_error(code, e.to_string()))
-    }
-
-    fn key_repeat(&mut self, code: u16) -> Result<(), DeviceError> {
-        let key =
-            PhysicalKey::from_linux_code(u32::from(code)).ok_or(DeviceError::UnknownKey(code))?;
-        let dev = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| DeviceError::Create("device not created".into()))?;
-        dev.key_repeat(key)
-            .map_err(|e| classify_sink_error(code, e.to_string()))
-    }
-
-    fn release_all(&mut self) -> Result<(), DeviceError> {
-        if let Some(dev) = self.inner.as_mut() {
-            log::info!("release_all: releasing held keys");
-            dev.release_all()
-                .map_err(|e| DeviceError::Io(e.to_string()))?;
-            log::info!("release_all: done");
-        }
-        Ok(())
-    }
-
-    fn capability_codes(&self) -> &[u32] {
-        &self.capabilities
-    }
-}
-
-fn classify_sink_error(code: u16, message: String) -> DeviceError {
-    if message.contains("KeyUpWithoutDown") {
+fn map_sink(code: u16, e: &ferrokey_uinput::SinkError) -> DeviceError {
+    let msg = e.0.as_str();
+    if msg.contains("KeyUpWithoutDown") {
         DeviceError::KeyUpWithoutDown(code)
-    } else if message.contains("Rollover") {
+    } else if msg.contains("Rollover") {
         DeviceError::Rollover(code)
-    } else if message.contains("NotCapable") {
+    } else if msg.contains("KeyBusy") {
+        DeviceError::KeyBusy(code)
+    } else if msg.contains("capability") {
         DeviceError::UnknownKey(code)
     } else {
-        DeviceError::Io(message)
+        DeviceError::Io(e.0.clone())
+    }
+}
+
+/// The real uinput-backed device (adopted from the bootstrap component).
+pub struct RealDevice(pub UinputDevice);
+
+impl KeyDevice for RealDevice {
+    fn key_down(&mut self, key: PhysicalKey) -> Result<(), DeviceError> {
+        let code = u16::try_from(key.linux_code()).unwrap_or(0);
+        self.0.key_down(key).map_err(|e| map_sink(code, &e))
+    }
+
+    fn key_up(&mut self, key: PhysicalKey) -> Result<(), DeviceError> {
+        let code = u16::try_from(key.linux_code()).unwrap_or(0);
+        self.0.key_up(key).map_err(|e| map_sink(code, &e))
+    }
+
+    fn key_repeat(&mut self, key: PhysicalKey) -> Result<(), DeviceError> {
+        let code = u16::try_from(key.linux_code()).unwrap_or(0);
+        self.0.key_repeat(key).map_err(|e| map_sink(code, &e))
+    }
+
+    fn release_keys(&mut self, codes: &[u16]) -> Vec<DeviceError> {
+        self.0
+            .release_keys(codes)
+            .into_iter()
+            .map(|e| {
+                let code = codes.first().copied().unwrap_or(0);
+                map_sink(code, &e)
+            })
+            .collect()
+    }
+
+    fn release_all(&mut self) -> Vec<DeviceError> {
+        self.0
+            .release_all()
+            .into_iter()
+            .map(|e| DeviceError::Io(e.0.clone()))
+            .collect()
+    }
+
+    fn capability_codes(&self) -> &[u16] {
+        self.0.capability_codes()
+    }
+
+    fn is_capable(&self, code: u16) -> bool {
+        ferrokey_uinput::is_capable(code)
+    }
+
+    fn is_held(&self, code: u16) -> bool {
+        self.0.is_held(code)
+    }
+
+    fn held_count(&self) -> usize {
+        self.0.held_count()
     }
 }
 
 /// A recording device used by the unit courts: no kernel involved.
+///
+/// Mirrors the real ledger semantics: duplicate downs are rejected, ups
+/// without downs are rejected, rollover is capped.
 #[derive(Debug, Default)]
-pub struct MockKeyboard {
-    pub events: Vec<(bool, u16)>, // (is_down, code)
-    pub created: bool,
+pub struct MockKeyDevice {
+    /// (code, value) event log — 1 down, 0 up, 2 repeat.
+    pub events: Vec<(u16, i32)>,
     pub released_all: u32,
-    pub capabilities: Vec<u32>,
+    pub capabilities: Vec<u16>,
+    pub max_held: usize,
 }
 
-impl MockKeyboard {
+impl MockKeyDevice {
     pub fn new() -> Self {
-        MockKeyboard {
+        MockKeyDevice {
             capabilities: ferrokey_uinput::capability_codes(),
+            max_held: 16,
             ..Default::default()
         }
     }
 
+    /// The latest event for this code decides its state (like the ledger).
+    /// Repeat events (value 2) do NOT change the held state — mirror the
+    /// real ledger (§22): a repeat after a down keeps the key held.
     pub fn is_held(&self, code: u16) -> bool {
-        // The latest event for this code decides its state.
         self.events
             .iter()
             .rev()
-            .find(|(_, c)| *c == code)
-            .map(|(down, _)| *down)
+            .find(|(c, v)| *c == code && *v != 2)
+            .map(|(_, v)| *v == 1)
             .unwrap_or(false)
     }
 }
 
-impl KeyboardDevice for MockKeyboard {
-    fn create(&mut self) -> Result<(), DeviceError> {
-        self.created = true;
+impl KeyDevice for MockKeyDevice {
+    fn key_down(&mut self, key: PhysicalKey) -> Result<(), DeviceError> {
+        let code = u16::try_from(key.linux_code()).unwrap_or(0);
+        if !self.is_capable(code) {
+            return Err(DeviceError::UnknownKey(code));
+        }
+        if self.is_held(code) {
+            return Err(DeviceError::KeyBusy(code));
+        }
+        if self.held_count() >= self.max_held {
+            return Err(DeviceError::Rollover(code));
+        }
+        self.events.push((code, 1));
         Ok(())
     }
 
-    fn key_down(&mut self, code: u16) -> Result<(), DeviceError> {
-        self.events.push((true, code));
-        Ok(())
-    }
-
-    fn key_up(&mut self, code: u16) -> Result<(), DeviceError> {
+    fn key_up(&mut self, key: PhysicalKey) -> Result<(), DeviceError> {
+        let code = u16::try_from(key.linux_code()).unwrap_or(0);
+        if !self.is_capable(code) {
+            return Err(DeviceError::UnknownKey(code));
+        }
         if !self.is_held(code) {
             return Err(DeviceError::KeyUpWithoutDown(code));
         }
-        self.events.push((false, code));
+        self.events.push((code, 0));
         Ok(())
     }
 
-    fn key_repeat(&mut self, code: u16) -> Result<(), DeviceError> {
-        // Autorepeat is not a state transition: require the key to be held.
+    fn key_repeat(&mut self, key: PhysicalKey) -> Result<(), DeviceError> {
+        let code = u16::try_from(key.linux_code()).unwrap_or(0);
         if !self.is_held(code) {
             return Err(DeviceError::KeyUpWithoutDown(code));
         }
-        self.events.push((true, code));
+        self.events.push((code, 2));
         Ok(())
     }
 
-    fn release_all(&mut self) -> Result<(), DeviceError> {
+    fn release_keys(&mut self, codes: &[u16]) -> Vec<DeviceError> {
+        let mut errors = Vec::new();
+        for &code in codes {
+            if !self.is_held(code) {
+                errors.push(DeviceError::KeyUpWithoutDown(code));
+                continue;
+            }
+            self.events.push((code, 0));
+        }
+        errors
+    }
+
+    fn release_all(&mut self) -> Vec<DeviceError> {
         self.released_all += 1;
-        self.events.retain(|(down, _)| !down);
-        Ok(())
+        let held: Vec<u16> = self
+            .events
+            .iter()
+            .rev()
+            .filter(|(_, v)| *v == 1)
+            .map(|(c, _)| *c)
+            .collect();
+        self.release_keys(&held)
     }
 
-    fn capability_codes(&self) -> &[u32] {
+    fn capability_codes(&self) -> &[u16] {
         &self.capabilities
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn is_capable(&self, code: u16) -> bool {
+        ferrokey_uinput::is_capable(code)
+    }
+
+    fn is_held(&self, code: u16) -> bool {
+        self.is_held(code)
+    }
+
+    fn held_count(&self) -> usize {
+        self.events
+            .iter()
+            .filter(|(_, v)| *v == 1)
+            .map(|(c, _)| *c)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
     }
 }
 
@@ -210,28 +242,35 @@ mod tests {
 
     #[test]
     fn mock_tracks_held_state() {
-        let mut kb = MockKeyboard::new();
-        kb.key_down(30).unwrap();
+        let mut kb = MockKeyDevice::new();
+        kb.key_down(PhysicalKey::A).unwrap();
         assert!(kb.is_held(30));
-        kb.key_up(30).unwrap();
+        kb.key_up(PhysicalKey::A).unwrap();
         assert!(!kb.is_held(30));
-        assert!(kb.key_up(30).is_err()); // key_up without down
+        assert!(kb.key_up(PhysicalKey::A).is_err()); // up without down
+    }
+
+    #[test]
+    fn mock_rejects_duplicate_down() {
+        let mut kb = MockKeyDevice::new();
+        kb.key_down(PhysicalKey::A).unwrap();
+        assert_eq!(kb.key_down(PhysicalKey::A), Err(DeviceError::KeyBusy(30)));
     }
 
     #[test]
     fn mock_release_all_clears() {
-        let mut kb = MockKeyboard::new();
-        kb.key_down(30).unwrap();
-        kb.key_down(42).unwrap();
-        kb.release_all().unwrap();
-        assert!(kb.events.is_empty());
+        let mut kb = MockKeyDevice::new();
+        kb.key_down(PhysicalKey::A).unwrap();
+        kb.key_down(PhysicalKey::B).unwrap();
+        assert!(kb.release_all().is_empty());
+        assert!(!kb.is_held(30) && !kb.is_held(48));
         assert_eq!(kb.released_all, 1);
     }
 
     #[test]
     fn capability_codes_are_dense() {
-        let kb = MockKeyboard::new();
-        let unique: std::collections::BTreeSet<u32> = kb.capabilities.iter().copied().collect();
+        let kb = MockKeyDevice::new();
+        let unique: std::collections::BTreeSet<u16> = kb.capabilities.iter().copied().collect();
         assert_eq!(unique.len(), kb.capabilities.len());
     }
 }

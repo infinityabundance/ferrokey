@@ -43,13 +43,19 @@ mkdir -p "$PAYLOAD_DIR"/{bin,courts}
 cp -r "$REPO_ROOT/testing/courts/." "$PAYLOAD_DIR/courts/"
 cp -r "$REPO_ROOT/testing/vm/provision" "$PAYLOAD_DIR/" 2>/dev/null || true
 cp -r "$REPO_ROOT/testing/fixtures" "$PAYLOAD_DIR/" 2>/dev/null || true
+# The systemd court installs the hardened unit from the packaging tree (§38).
+cp -r "$REPO_ROOT/PACKAGING" "$PAYLOAD_DIR/" 2>/dev/null || true
+# The Electron court app (a script-only app; nothing to compile).
+cp -r "$REPO_ROOT/testing/targets/electron" "$PAYLOAD_DIR/electron" 2>/dev/null || true
 
 echo "==> building product binaries (builder image)"
+# The payload-cargo volume overlays only the registry: a volume mounted over
+# /usr/local/cargo would hide the rust image's cargo toolchain.
 "$DOCKER" run --rm \
     --network "${COURT_NETWORK:-bridge}" \
     -v "$REPO_ROOT:/repo:ro" \
     -v "$PAYLOAD_DIR/bin:/out" \
-    -v ferrokey-payload-cargo:/usr/local/cargo \
+    -v ferrokey-payload-cargo:/usr/local/cargo/registry \
     -v ferrokey-payload-target:/target \
     -e CARGO_HOME=/usr/local/cargo \
     -e CARGO_TARGET_DIR=/target \
@@ -79,16 +85,25 @@ echo "==> building court targets (targets image)"
         cargo build --release \
             -p ferrokey-test-common -p ferrokey-test-target-x11 \
             -p ferrokey-test-target-wayland -p ferrokey-test-target-slint \
-            -p ferrokey-test-target-gtk -p ferrokey-test-virtinput
+            -p ferrokey-test-target-gtk -p ferrokey-test-target-sdl \
+            -p ferrokey-test-layer-probe -p ferrokey-test-virtinput
         cp /target/release/ferrokey-test-target-x11 \
            /target/release/ferrokey-test-target-wayland \
            /target/release/ferrokey-test-target-slint \
            /target/release/ferrokey-test-target-gtk \
+           /target/release/ferrokey-test-target-sdl \
+           /target/release/ferrokey-test-layer-probe \
            /target/release/ferrokey-test-virtinput /out/
         # Qt target via CMake
         cmake -S /targets/qt -B /target/qt-build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
         cmake --build /target/qt-build >/dev/null
         cp /target/qt-build/ferrokey-test-target-qt /out/
+        # The fake-touch court helper: a uinput touchscreen for the touch
+        # court (guest-only; never installed on the host).
+        gcc -O2 -Wall -o /out/fake-touch /targets/fake-touch.c
+        # The pty-oracle probe: the deterministic PTY child for the embedded
+        # terminal-workspace courts (reports bytes/winsize/signals, §99).
+        gcc -O2 -Wall -o /out/pty-oracle /targets/pty-oracle.c
     '
 
 echo "payload binaries:"
@@ -109,9 +124,13 @@ fi
     -v "$REPO_ROOT:/repo:ro" \
     -v ferrokey-vm-state:/court/state \
     -v "$PAYLOAD_DIR:/court/state/payload:ro" \
+    -v ferrokey-kasan-kernel:/kasan-kernel:ro \
     -e COURT="$COURT" \
     -e PROFILE="$PROFILE" \
     -e DISTRO="$DISTRO" \
+    -e MUTATION="${MUTATION:-}" \
+    -e SOAK_SECONDS="${SOAK_SECONDS:-}" \
+    -e KASAN="${KASAN:-}" \
     "$ORACLE_IMAGE" \
     /repo/testing/vm/qemu/run-court-inner.sh "$COURT" "$PROFILE"
 

@@ -27,10 +27,24 @@ the wire.
 
 - `Message` / `Opcode` — the frame vocabulary.
 - `codec::encode` / `codec::Decoder` — length-prefixed framing with strict
-  length bounds and garbage rejection.
+  length bounds and garbage rejection. The decoder's buffering is hard-bounded
+  (one partial frame maximum), so hostile streams cannot grow memory.
 - `client::Client` — a `KeySink` implementation that sends events to the
   daemon socket.
 - `peer::peer_identity` — peer uid/gid extraction for authorization.
+
+## Fuzzing
+
+The hostile-input claim is verified two ways:
+
+- on **stable**, deterministic byte-level stress tests in
+  `codec::tests` (random streams, byte flips of every valid frame, truncation
+  at every boundary) run in plain `cargo test`;
+- in **CI on nightly**, a real libFuzzer harness lives in `fuzz/`:
+
+  ```sh
+  cd fuzz && cargo +nightly fuzz run fuzz_decoder -- -max_total_time=180
+  ```
 
 ## Example
 

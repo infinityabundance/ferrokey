@@ -54,6 +54,12 @@ if [ ! -f "$BASE_IMAGE" ]; then
                 https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2
             mv "$BASE_IMAGE.part" "$BASE_IMAGE"
             ;;
+        debian-12-browsers)
+            # Pre-baked appliance (rule 5): the X11 stack plus Firefox,
+            # Chromium, SDL and Electron, built ONCE and cached. Built on
+            # demand by the qemu builder; see build-browsers-image.sh.
+            bash /repo/testing/vm/qemu/build-browsers-image.sh "$STATE"
+            ;;
         *)
             echo "unknown distro $DISTRO"
             exit 1
@@ -68,6 +74,13 @@ echo "base image sha256=$BASE_SHA"
 # ---------------------------------------------------------------------------
 RUN_OVERLAY="$OVERLAYS/$COURT-$(date +%s%N).qcow2"
 qemu-img create -q -f qcow2 -b "$BASE_IMAGE" -F qcow2 "$RUN_OVERLAY"
+# The wayland profile installs KWin (large KDE dependency tree); grow the
+# root fs so the install fits. cloud-init auto-grows the partition on boot.
+# 6G keeps the COW data bounded (the state volume is a 26G tmpfs shared by
+# all court evidence).
+if [ "$PROFILE" = "wayland" ]; then
+    qemu-img resize "$RUN_OVERLAY" 6G
+fi
 
 # ---------------------------------------------------------------------------
 # 3. SSH key + cloud-init seed (rule 7: self-provisioning, no manual config).
@@ -100,7 +113,14 @@ open(userdata, "w").write(text)
 PYEOF
 
 SEED="$STATE/seeds/$COURT-seed.iso"
-cloud-localds "$SEED" "$USERDATA"
+# A fresh instance-id per boot (rule 7): cloud-init re-runs the user-data for
+# the new instance, re-applying the SSH key. Without this, an overlay booted
+# over a PRE-BAKED base image (debian-12-browsers) looks like the same
+# instance cloud-init already saw, so the new court key is never installed
+# and SSH never authenticates.
+METADATA="$STATE/seeds/$COURT-meta.yaml"
+echo "instance-id: $COURT-$(date +%s%N)" > "$METADATA"
+cloud-localds "$SEED" "$USERDATA" "$METADATA"
 
 # ---------------------------------------------------------------------------
 # 4. Boot (rule 8: headless; rule 36: KVM when available, TCG fallback).
@@ -108,12 +128,27 @@ cloud-localds "$SEED" "$USERDATA"
 SSH_PORT=$(( 22000 + (RANDOM % 1000) ))
 PIDFILE="$STATE/qemu-$COURT.pid"
 KVM=0; [ -e /dev/kvm ] && KVM=1
-bash /repo/testing/vm/qemu/boot.sh "$RUN_OVERLAY" "$SEED" "$SSH_PORT" "$KVM" "$PIDFILE"
+if [ -n "${KASAN:-}" ]; then
+    # §66–§68: boot the KASAN+UBSAN+LOCKDEP kernel by direct -kernel boot
+    # (built once by build-kasan-kernel.sh and cached in the kasan volume).
+    BZIMAGE=/kasan-kernel/bzImage
+    if [ ! -f "$BZIMAGE" ]; then
+        echo "KASAN kernel missing: run testing/scripts/build-kasan-kernel.sh"
+        exit 1
+    fi
+    bash /repo/testing/vm/qemu/boot-kernel.sh "$RUN_OVERLAY" "$SEED" "$SSH_PORT" "$KVM" "$PIDFILE" "$BZIMAGE"
+else
+    bash /repo/testing/vm/qemu/boot.sh "$RUN_OVERLAY" "$SEED" "$SSH_PORT" "$KVM" "$PIDFILE"
+fi
 
 cleanup() {
+    # QEMU removes its pidfile on clean exit, so each cat is guarded
+    # (kill after the file is gone would print a confusing error).
     if [ -f "$PIDFILE" ]; then
         kill "$(cat "$PIDFILE")" 2>/dev/null || true
         sleep 1
+    fi
+    if [ -f "$PIDFILE" ]; then
         kill -9 "$(cat "$PIDFILE")" 2>/dev/null || true
     fi
     rm -f "$RUN_OVERLAY" 2>/dev/null || true
@@ -154,7 +189,7 @@ if [ -f "/repo/testing/courts/$COURT/court.sh" ]; then
     # (ferrokeyd, evtest, …) elevate per-command with sudo inside lib.sh. This
     # keeps the SO_PEERCRED whitelist meaningful: clients are uid 1000.
     "${SSH[@]}" -p "$SSH_PORT" court@127.0.0.1 \
-        "cd ~/payload && env RUN_ID=vm bash courts/$COURT/court.sh" \
+        "cd ~/payload && env RUN_ID=vm MUTATION=\"${MUTATION:-}\" SOAK_SECONDS=\"${SOAK_SECONDS:-}\" bash courts/$COURT/court.sh" \
         || echo "court script exit code: $?"
 else
     echo "no court script for $COURT"
@@ -164,6 +199,10 @@ fi
 # 7. Collect evidence (rules 38-40): receipts, logs, device dumps.
 # ---------------------------------------------------------------------------
 EVIDENCE="$STATE/evidence/$COURT"
+# §94: a court that dies before finish_court (set -e, crash) must NEVER read
+# a stale PASS receipt from an earlier run — clear the whole evidence dir so
+# a missing receipt defaults to FAIL instead of inheriting yesterday's PASS.
+rm -rf "$EVIDENCE"
 mkdir -p "$EVIDENCE"/{logs,devices,screenshots}
 "${SSH[@]}" -p "$SSH_PORT" court@127.0.0.1 "sudo cp /proc/bus/input/devices /home/court/court-output/devices.txt 2>/dev/null; sudo udevadm info --export-db > /home/court/court-output/udev.txt 2>/dev/null || true; sudo cp /var/log/Xorg.0.log /home/court/court-output/xorg-full.log 2>/dev/null || true" || true
 "${SCP[@]}" -r "court@127.0.0.1:court-output/." "$EVIDENCE/" 2>/dev/null || true
@@ -190,4 +229,11 @@ else
     echo "overlay retained as failure evidence"
 fi
 
-exit 0
+# §94: a failed receipt must fail the pipeline — the oracle container exit
+# code carries the court result so run-vm-court.sh and run-all-courts.sh
+# propagate it to CI. No `|| true`, no unconditional `exit 0` may mask a
+# security failure.
+if [ "$RESULT" = "PASS" ]; then
+    exit 0
+fi
+exit 1

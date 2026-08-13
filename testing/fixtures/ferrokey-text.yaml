@@ -1,0 +1,21 @@
+# ferrokey UI configuration: plain US layout, text mode ON.
+#
+# Used by the text-mode court: characters are typed through the text engine
+# (layout-driven chords), while modifiers and navigation keys still flow as
+# real key events.
+layout: us
+socket_path: /run/ferrokeyd/ferrokeyd.sock
+width: 920
+height: 342
+x11_display: ":0"
+sticky:
+  latch_enabled: true
+  lock_enabled: true
+  tap_timeout_ms: 400
+  double_tap_timeout_ms: 500
+repeat:
+  enabled: true
+  delay_ms: 500
+  cadence_ms: 30
+force_degraded_banner: false
+text_mode: true
