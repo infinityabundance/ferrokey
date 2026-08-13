@@ -82,7 +82,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/infinityabundance/ferrokey"
@@ -128,12 +128,12 @@ tempfile = "3.20"
 # version + path: cargo resolves the path locally during development, and
 # replaces it with the crates.io version when publishing (a bare path
 # dependency is rejected by `cargo publish`).
-ferrokey-core = { version = "0.1.1", path = "crates/ferrokey-core" }
-ferrokey-layouts = { version = "0.1.1", path = "crates/ferrokey-layouts" }
-ferrokey-protocol = { version = "0.1.1", path = "crates/ferrokey-protocol" }
-ferrokey-surface = { version = "0.1.1", path = "crates/ferrokey-surface" }
+ferrokey-core = { version = "0.1.2", path = "crates/ferrokey-core" }
+ferrokey-layouts = { version = "0.1.2", path = "crates/ferrokey-layouts" }
+ferrokey-protocol = { version = "0.1.2", path = "crates/ferrokey-protocol" }
+ferrokey-surface = { version = "0.1.2", path = "crates/ferrokey-surface" }
 ferrokey-terminal = { version = "0.1.1", path = "crates/ferrokey-terminal" }
-ferrokey-uinput = { version = "0.1.1", path = "crates/ferrokey-uinput" }
+ferrokey-uinput = { version = "0.1.2", path = "crates/ferrokey-uinput" }
 
 [profile.release]
 lto = "thin"
