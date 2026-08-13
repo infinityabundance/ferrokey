@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # TERM.PTY / TERM.KEYS / TERM.CTRL / TERM.ALT / TERM.NAV / TERM.RESIZE /
 # TERM.SCROLLBACK / TERM.VIEWPORT / TERM.ALTSCREEN / TERM.SELECTION /
-# TERM.SHELL / TERM.NO_UINPUT / TERM.SECURITY / TERM.RESTART / TERM.TUI
-# (Phase 3 addendum #2, §87–§105, §120).
+# TERM.IDENTITY / TERM.SHELL / TERM.NO_UINPUT / TERM.SECURITY /
+# TERM.RESTART / TERM.TUI (Phase 3 addendum #2, §87–§105, §120).
 #
 # The embedded terminal workspace: the OSK drives a REAL PTY directly —
 # no ferrokeyd, no /dev/uinput, no compositor focus involvement. The PTY
@@ -269,6 +269,52 @@ assert_oracle_contains "TERM.ALTSCREEN.001: terminal responds inside the alterna
 type_command "alt.off"
 sleep 0.6
 
+# ── TERM.SELECTION.001 (§27–§28): pane selection → copy → paste ───────────
+# The main screen (restored by the alt-screen round trip) still shows the
+# "hello" printed by TERM.PTY.001 at row 0. Long-press (>500 ms, no drift)
+# starts a character selection; dragging extends it; the bottom-left "copy"
+# pill ships it to the X selection through the unprivileged backend (xclip);
+# the "paste" pill feeds it back into the PTY byte-exact. The pane gesture
+# machine never leaks a drag into an OSK key (§25).
+# Pane-relative geometry at font 16 px: cell 8x17; pane 220 tall at y=342.
+SELECT_X0=4                      # cell (0,0) center x — start of "hello"
+SELECT_Y=$((KEYBOARD_H + 8))     # pane row 0 center y (screen coords)
+SELECT_X1=$((4 * 8 + 4))         # cell (4,0) center x — end of "hello"
+# Long-press at the start of "hello" (hold past LONG_PRESS without drifting).
+sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool mousemove "$SELECT_X0" "$SELECT_Y" mousedown 1
+sleep 0.7
+# Drag across the word, then release (extends to cell 4).
+sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool mousemove "$SELECT_X1" "$SELECT_Y"
+sleep 0.2
+sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool mouseup 1
+sleep 0.5
+# The copy pill (bottom-left, 64x26 at pane y=220-34) — only present while a
+# selection exists. Click it and poll the clipboard: xclip hands the
+# selection to an async ownership daemon, so the read may lag the click; the
+# retry also heals a first click that raced the selection's first paint.
+PILL_X=$((8 + 32))
+PILL_Y=$((KEYBOARD_H + PANE_H - 34 + 13))
+CLIP=""
+for _ in $(seq 1 12); do
+    sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool mousemove "$PILL_X" "$PILL_Y" click 1
+    sleep 0.5
+    CLIP=$(sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xclip -o 2>/dev/null || true)
+    [ "$CLIP" = "hello" ] && break
+done
+if [ "$CLIP" = "hello" ]; then
+    ok "TERM.SELECTION.001: long-press+drag selected 'hello' and the copy pill shipped it to the clipboard"
+else
+    bad "TERM.SELECTION.001: clipboard is '$CLIP'"
+fi
+# Copy clears the selection, so the paste pill re-anchors at the same spot.
+# Click it and wait for "hello" to arrive at the END of the oracle stream.
+sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool mousemove "$PILL_X" "$PILL_Y" click 1
+for _ in $(seq 1 12); do
+    [[ "$(oracle_hex)" == *68656c6c6f ]] && break
+    sleep 0.5
+done
+assert_oracle_suffix "TERM.SELECTION.001: paste pill fed the selection back into the PTY" "68656c6c6f"
+
 # ── TERM.SECURITY.001 (§105): hostile child output never breaks the terminal
 type_command "hostile"
 sleep 1.2
@@ -318,6 +364,22 @@ if grep -q '"rows":21,"cols":125' "$ORACLE_LOG" 2>/dev/null; then
 else
     bad "TERM.RESIZE.001: child did not receive a resize; oracle winsizes:"
     grep '"event":"winsize"' "$ORACLE_LOG" | tail -3 || true
+fi
+
+# ── TERM.IDENTITY.001 (§120): the PTY child runs as the unprivileged user ──
+# The child inherits the app's identity — never root, never ferrokeyd (§8).
+# Read the spawned pid from the app log and check its /proc status.
+CHILD_PID=$(grep -oP 'terminal child spawned: pid \K[0-9]+' "$OUT/ferrokey.log" | tail -1)
+COURT_UID=$(id -u)
+if [ -n "$CHILD_PID" ]; then
+    CHILD_UID=$(awk '/^Uid:/{print $2}' "/proc/$CHILD_PID/status" 2>/dev/null || true)
+    if [ "$CHILD_UID" = "$COURT_UID" ]; then
+        ok "TERM.IDENTITY.001: terminal child pid $CHILD_PID runs as the court user (uid $COURT_UID, never root)"
+    else
+        bad "TERM.IDENTITY.001: terminal child uid is '$CHILD_UID' (want $COURT_UID)"
+    fi
+else
+    bad "TERM.IDENTITY.001: no 'terminal child spawned' line in the app log"
 fi
 
 # ── TERM.NO_UINPUT.001 final ──────────────────────────────────────────────
@@ -444,5 +506,71 @@ else
     grep -i "terminal child" "$OUT/ferrokey.log" | tail -3 || true
     tail -10 "$TUI_VIM_ERR" 2>/dev/null || true
 fi
+
+# ── TERM.TUI.002–004 (§98): less / htop / tmux as the PTY child ───────────
+# Same contract as vim: real TUIs that require a working terminal (each
+# refuses or degrades on a broken PTY), driven entirely through the OSK,
+# with the broker reaping the app's own exit status.
+tui_test() { # tui_test <label> <wrapper-name> <exec-line> <quit-keys...>
+    local label="$1" wrapper="$2" exec_line="$3"
+    shift 3
+    kill_ferrokey
+    local wr="$OUT/$wrapper" err="$OUT/$wrapper.stderr"
+    cat > "$wr" <<EOF
+#!/bin/bash
+: > $err
+exec $exec_line 2>>$err
+EOF
+    chmod +x "$wr"
+    local fx="$OUT/ferrokey-terminal-$wrapper.yaml"
+    cat > "$fx" <<EOF
+layout: us
+view: terminal
+width: $WIN_W
+height: $KEYBOARD_H
+terminal:
+  enabled: true
+  pane_height: $PANE_H
+  font_size_px: 16
+  scrollback_lines: 10000
+  shell: $wr
+destination: terminal
+EOF
+    start_ferrokey "$fx"
+    for _ in $(seq 1 60); do
+        grep -q "terminal session started" "$OUT/ferrokey.log" && break
+        sleep 0.5
+    done
+    local up=0
+    for _ in $(seq 1 40); do
+        [ -f "$err" ] && up=1 && break
+        sleep 0.5
+    done
+    sleep 2
+    if [ "$up" = 1 ] && ! grep -qiE "not to a terminal|E558|Error opening terminal|terminal entry" "$err" 2>/dev/null; then
+        ok "$label: TUI accepted the PTY as a real terminal"
+    else
+        bad "$label: TUI rejected the PTY; stderr: $(tail -5 "$err" 2>/dev/null | tr '\n' ' ')"
+    fi
+    for k in "$@"; do
+        click_osk_key "$k"
+        sleep 0.3
+    done
+    for _ in $(seq 1 60); do
+        grep -q "terminal child exited: exited with status 0" "$OUT/ferrokey.log" && break
+        sleep 0.5
+    done
+    if grep -q "terminal child exited: exited with status 0" "$OUT/ferrokey.log"; then
+        ok "$label: TUI ran on the PTY and quit cleanly"
+    else
+        bad "$label: TUI did not exit cleanly"
+        grep -i "terminal child" "$OUT/ferrokey.log" | tail -3 || true
+        tail -10 "$err" 2>/dev/null || true
+    fi
+}
+
+tui_test "TERM.TUI.002" tui-less.sh "/usr/bin/less -R /etc/os-release" q
+tui_test "TERM.TUI.003" tui-htop.sh "/usr/bin/htop" q
+tui_test "TERM.TUI.004" tui-tmux.sh "/usr/bin/tmux new-session" e x i t enter
 
 finish_court "court" "terminal-workspace"

@@ -924,24 +924,40 @@ impl Terminal {
 
     // ── Pointer interaction (touch scroll / selection / controls) ────────
 
+    /// Whether `(x, y)` (pane-relative px) is over an overlay control
+    /// (copy / paste / restart / newest). The pane gesture machine uses this
+    /// to keep a press on a control a tap even while a selection exists —
+    /// otherwise the copy pill (which only exists during a selection) would
+    /// be unreachable (§28).
+    pub fn over_control(&self, x: u32, y: u32) -> bool {
+        let ui = self.renderer.borrow().frame_ui();
+        [ui.newest, ui.restart, ui.copy, ui.paste]
+            .into_iter()
+            .flatten()
+            .any(|b| b.contains(x, y))
+    }
+
     /// Handle a tap inside the pane at physical-px coordinates (pane-relative).
     /// Returns `true` if the terminal consumed the tap.
     pub fn tap(&mut self, x: u32, y: u32) -> bool {
         let ui = self.renderer.borrow().frame_ui();
         if let Some(btn) = ui.newest {
             if btn.contains(x, y) {
+                log::debug!("pane tap ({x},{y}) hit newest");
                 self.return_to_newest();
                 return true;
             }
         }
         if let Some(btn) = ui.restart {
             if btn.contains(x, y) {
+                log::debug!("pane tap ({x},{y}) hit restart");
                 let _ = self.restart();
                 return true;
             }
         }
         if let Some(btn) = ui.copy {
             if btn.contains(x, y) {
+                log::debug!("pane tap ({x},{y}) hit copy");
                 if let Some(mut clip) = self.clipboard.take() {
                     let _ = self.copy_selection(clip.as_mut());
                     self.clipboard = Some(clip);
@@ -951,6 +967,7 @@ impl Terminal {
         }
         if let Some(btn) = ui.paste {
             if btn.contains(x, y) {
+                log::debug!("pane tap ({x},{y}) hit paste");
                 if let Some(mut clip) = self.clipboard.take() {
                     match clip.get_text() {
                         Ok(text) => {
@@ -971,6 +988,7 @@ impl Terminal {
             }
         }
         if let Some(pos) = self.physical_to_doc(x, y) {
+            log::debug!("pane tap ({x},{y}) started a selection at {pos:?}");
             self.selection_start(pos, SelectionMode::Character);
             return true;
         }

@@ -23,6 +23,7 @@ const SCROLL_THRESHOLD_CELLS: u32 = 2;
 const LONG_PRESS: Duration = Duration::from_millis(500);
 
 /// The state of the gesture in progress.
+#[derive(Debug)]
 enum Gesture {
     /// Pressed; neither scroll nor selection decided yet.
     Pending { y: u32, pressed_at: Instant },
@@ -45,10 +46,16 @@ pub struct TerminalInput {
 impl TerminalInput {
     /// A press went down in the pane at physical px `(x, y)`.
     pub fn press(&mut self, term: &mut Terminal, x: u32, y: u32, now: Instant) {
+        log::debug!(
+            "pane press ({x},{y}) selecting={}",
+            term.selection().is_some()
+        );
         self.owns_pointer = true;
-        // If a selection already exists, a follow-up press starts a
-        // selection-extension gesture directly.
-        let selecting = term.selection().is_some();
+        // A press on an overlay control (copy/paste/restart/newest) is a tap
+        // even when a selection exists — otherwise the copy pill, which only
+        // exists during a selection, would be unreachable (§28). Anything
+        // else follows the selection-extension rule.
+        let selecting = term.selection().is_some() && !term.over_control(x, y);
         self.gesture = Some(if selecting {
             Gesture::Select
         } else {
@@ -60,6 +67,7 @@ impl TerminalInput {
     /// The pointer moved while pressed.
     pub fn move_to(&mut self, term: &mut Terminal, x: u32, y: u32, now: Instant) {
         let Some(gesture) = self.gesture.as_mut() else {
+            log::debug!("pane move ({x},{y}) no gesture");
             return;
         };
         match gesture {
@@ -96,6 +104,7 @@ impl TerminalInput {
 
     /// The pointer went up.
     pub fn release(&mut self, term: &mut Terminal, x: u32, y: u32) {
+        log::debug!("pane release ({x},{y}) gesture={:?}", self.gesture);
         self.owns_pointer = false;
         match self.gesture.take() {
             Some(Gesture::Pending { .. }) => {
@@ -233,5 +242,25 @@ mod tests {
         input.cancel();
         assert!(!input.owns_pointer);
         assert!(input.gesture.is_none());
+    }
+
+    #[test]
+    fn press_on_copy_pill_is_a_tap_even_while_selecting() {
+        let mut t = term();
+        let mut input = TerminalInput::default();
+        let now = Instant::now();
+        t.selection_start(CellPos::new(49, 0), SelectionMode::Character);
+        t.selection_extend(CellPos::new(49, 5));
+        // Paint the frame so the copy pill exists at the bottom-left
+        // (800x400 → x 8..72, y 366..392).
+        let _ = t.render();
+        assert!(t.over_control(40, 379), "copy pill must be hittable");
+        let end_before = t.selection().unwrap().end;
+        input.press(&mut t, 40, 379, now);
+        input.release(&mut t, 40, 379);
+        // The pill consumed the tap: the selection was left exactly as it
+        // was — never extended into the cell under the pill.
+        assert_eq!(t.selection().unwrap().end, end_before);
+        assert!(!input.owns_pointer);
     }
 }
