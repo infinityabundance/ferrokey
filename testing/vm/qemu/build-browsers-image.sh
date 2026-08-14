@@ -83,13 +83,20 @@ bash /repo/testing/vm/qemu/wait-ssh.sh 127.0.0.1 "$SSH_PORT" court "$SSH_KEY" 12
 echo "==> provisioning complete; snapshotting the image"
 
 # Shut the VM down cleanly, then convert the overlay to a standalone base.
+# The guest must be ALLOWED to finish syncing: killing QEMU mid-shutdown
+# aborts the ext4 journal, and the corrupted base image then bricks every
+# later overlay boot (the fs remounts read-only and SSH never comes up).
 "${SSH[@]}" -p "$SSH_PORT" court@127.0.0.1 "sudo poweroff" 2>/dev/null || true
-sleep 5
-# QEMU removes its pidfile on clean exit; guard the cat.
+# QEMU removes its pidfile on clean exit — wait for that, not a fixed sleep.
+for _ in $(seq 1 90); do
+    [ ! -f "$PIDFILE" ] && break
+    sleep 1
+done
+sleep 2
 if [ -f "$PIDFILE" ]; then
     kill "$(cat "$PIDFILE")" 2>/dev/null || true
+    sleep 2
 fi
-sleep 2
 
 qemu-img convert -O qcow2 "$RUN_OVERLAY" "$OUT_IMAGE"
 rm -f "$RUN_OVERLAY"

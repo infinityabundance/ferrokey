@@ -94,6 +94,11 @@ with open(sys.argv[1]) as fh:
         rows.append({"assertion": label, "result": "PASS" if kind == "PASS" else "FAIL"})
 with open(sys.argv[2], "w") as fh:
     json.dump(rows, fh, indent=2)
+    # Trailing newline: the compatibility receipt's evidence dump cats this
+    # file and then echoes the next section marker; without a final newline
+    # the marker lands glued to the closing `]` and the parser loses the
+    # section boundary (§37).
+    fh.write("\n")
 EOF
     echo "COURT $COURT_NAME: $result (${PASS} ok, ${FAILURES} fail)"
     [ "$result" = "PASS" ] && exit 0 || exit 1
@@ -122,13 +127,59 @@ start_xorg() {
     # X11 focus courts must exercise WM_HINTS/EWMH against a real WM — a bare
     # X server has no focus policy at all, so `xdotool windowactivate` and the
     # OSK's `WM_HINTS.input=False` behaviour would be inert without one.
-    if command -v openbox >/dev/null 2>&1; then
+    #
+    # The Wayland courts set COURT_NO_WM=1: sway IS the window manager there,
+    # and an X11 WM would only reparent+decorate the wlroots x11-backend
+    # window, offsetting the compositor's input coordinate space from the
+    # window geometry the court queries (unmanaged windows sit at (0,0) with
+    # no frame, so parent-relative == absolute == the pointer space — the
+    # court's click math stays exact).
+    if [ -n "${COURT_NO_WM:-}" ]; then
+        echo "openbox skipped (sway is the window manager)" >>"$OUT/openbox.log"
+    elif command -v openbox >/dev/null 2>&1; then
         sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" openbox >"$OUT/openbox.log" 2>&1 &
         sleep 1
         ok "openbox window manager started"
     else
         echo "openbox not installed; focus semantics degraded" >>"$OUT/openbox.log"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# The wlroots x11-backend window (the compositor output) for the Wayland
+# courts. Its title ("wlroots - X11-N") is set via _NET_WM_NAME, but that
+# property set FAILS on the dummy X server (the two ChangeProperty BadMatch
+# errors at sway startup), so name-based search finds nothing. Without an X11
+# WM the wlroots window is the ONLY child of the root window — the raw-tree
+# fallback below is exact. Returns the window id, or empty.
+# ---------------------------------------------------------------------------
+find_compositor_window() {
+    local win=""
+    win=$(sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" \
+        xdotool search --name 'wlroots' 2>/dev/null | head -1 || true)
+    if [ -z "$win" ]; then
+        # First child of the root window (header is 7 lines: the window-id
+        # line, blank, root/parent lines, blank, then the child list).
+        win=$(sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xwininfo -root -children 2>/dev/null \
+            | awk 'NR >= 7 && $1 ~ /^0x[0-9a-f]+$/ {print $1; exit}' || true)
+    fi
+    echo "$win"
+}
+
+# ---------------------------------------------------------------------------
+# The wlroots compositor-output window's client geometry (position + size).
+# This is the coordinate space every Wayland-court click lives in: unmanaged
+# windows sit at (0,0) with no frame, so window-relative == pointer space.
+# ---------------------------------------------------------------------------
+compositor_geometry() { # compositor_geometry -> "X Y WIDTH HEIGHT" (or empty)
+    local win geo x y w h
+    win=$(find_compositor_window)
+    [ -n "$win" ] || return 1
+    geo=$(sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" \
+        xdotool getwindowgeometry --shell "$win" 2>/dev/null || true)
+    [ -n "$geo" ] || return 1
+    eval "$geo"
+    echo "$X $Y $WIDTH $HEIGHT"
 }
 
 # ---------------------------------------------------------------------------

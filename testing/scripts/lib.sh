@@ -41,9 +41,13 @@ sanitize_env() {
 write_receipt() {
     local court="$1" result="$2"
     shift 2
+    # [key value ...] pairs become JSON members. Each pair is two args;
+    # anything else would produce a stray string literal and break the JSON
+    # (the receipt parser then silently drops the whole receipt — §37).
     local extra=""
-    for kv in "$@"; do
-        extra="$extra, \"$kv\""
+    while [ "$#" -ge 2 ]; do
+        extra="$extra, \"$1\": \"$2\""
+        shift 2
     done
     mkdir -p "$RUN_DIR/courts"
     cat > "$RUN_DIR/courts/$court.receipt.json" <<EOF

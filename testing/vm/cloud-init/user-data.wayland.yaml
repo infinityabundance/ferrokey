@@ -1,7 +1,12 @@
 #cloud-config
-# Ferrokey Wayland court VM: KWin (kwin_wayland) compositor nested in the
-# dummy X server (software QPainter compositing — no GPU needed), with
-# XWayland. Real zwlr_layer_shell_v1 support.
+# Ferrokey Wayland court VM: sway (wlroots) compositor nested in the dummy X
+# server (pixman renderer + X11 backend — no GPU needed), with XWayland.
+# wlroots is the reference zwlr_layer_shell_v1 implementation and the
+# protocol's home (zwlr = wlroots); its X11 backend honours
+# keyboard_interactivity=none and delivers XI2 touch, so the layer-shell
+# no-focus + touch contracts are testable for real. KWin's X11 backend was
+# dropped: it advertises no touch seat and steals keyboard focus on layer
+# clicks, so the layer-shell contract cannot be exercised on it.
 ssh_pwauth: false
 disable_root: false
 
@@ -16,9 +21,8 @@ users:
 
 package_update: true
 packages:
-  - kwin-wayland
-  - kwin-common
-  - kwin-data
+  - sway
+  - swaybg
   - dbus
   - xwayland
   - xserver-xorg-video-dummy

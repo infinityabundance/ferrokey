@@ -52,13 +52,19 @@ for d in */; do
     [ -f "$d/receipt.json" ] || continue
     echo "===COURT:$court"
     cat "$d/receipt.json"
+    # cat does not append a newline; the marker that follows must start its
+    # own line or the section parser swallows it (assertions.json, unlike
+    # the jq-written receipt, has no trailing newline).
+    echo
     if [ -f "$d/assertions.json" ]; then
         echo "===ASSERTIONS:$court"
         cat "$d/assertions.json"
+        echo
     fi
     if [ -f "$d/result" ]; then
         echo "===RESULT:$court"
         cat "$d/result"
+        echo
     fi
 done
 ' > "$TMP/vm-evidence.txt" 2>/dev/null || true

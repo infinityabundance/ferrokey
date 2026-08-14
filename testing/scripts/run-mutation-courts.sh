@@ -28,6 +28,17 @@ MUTATION_RUN_DIR="${MUTATION_RUN_DIR:-}"
 
 host_safety_preflight
 
+# The mutation runs overwrite /court/state/evidence/kernel-security (they
+# boot the same court name in MUTATION mode, and their failing receipts must
+# stay visible for check-mutation.py). Snapshot the CLEAN run's evidence
+# first and restore it after every mutation so the suite's later evidence
+# pull + security seal (§96) still read the non-mutated court record.
+"$DOCKER" run --rm -v ferrokey-vm-state:/court/state alpine sh -c \
+    'rm -rf /court/state/evidence/kernel-security.snapshot; \
+     if [ -d /court/state/evidence/kernel-security ]; then \
+         cp -a /court/state/evidence/kernel-security /court/state/evidence/kernel-security.snapshot; \
+     fi'
+
 WORK=""
 RUN_IDS=()
 cleanup() {
@@ -105,6 +116,16 @@ for kind in "${KINDS[@]}"; do
         echo "MUTATION $kind: caught, but NOT by the expected gate(s) — FAIL"
         failed=1
     fi
+
+    # ── 5. Restore the clean kernel-security evidence (see the snapshot
+    #        above): the mutation's failing record is already preserved under
+    #        $KIND_DIR, so the volume can go back to the non-mutated court
+    #        record for the suite's evidence pull and security seal.
+    "$DOCKER" run --rm -v ferrokey-vm-state:/court/state alpine sh -c \
+        'rm -rf /court/state/evidence/kernel-security; \
+         if [ -d /court/state/evidence/kernel-security.snapshot ]; then \
+             mv /court/state/evidence/kernel-security.snapshot /court/state/evidence/kernel-security; \
+         fi'
 
     rm -rf "$WORK"
     WORK=""

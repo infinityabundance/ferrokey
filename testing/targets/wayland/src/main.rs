@@ -22,6 +22,8 @@ struct State {
     compositor: Option<wl_compositor::WlCompositor>,
     wm_base: Option<(u32, xdg_wm_base::XdgWmBase)>,
     toplevel: Option<(xdg_surface::XdgSurface, xdg_toplevel::XdgToplevel)>,
+    surface: Option<wl_surface::WlSurface>,
+    buffer: Option<wl_buffer::WlBuffer>,
     configured: bool,
     shm: Option<wl_shm::WlShm>,
 }
@@ -42,6 +44,8 @@ fn main() {
         compositor: None,
         wm_base: None,
         toplevel: None,
+        surface: None,
+        buffer: None,
         configured: false,
         shm: None,
     };
@@ -80,8 +84,17 @@ impl State {
             qh,
             (),
         );
-        surface.attach(Some(&buffer), 0, 0);
+        // The initial-configure handshake: wlroots sends the first
+        // xdg_surface.configure only in response to the FIRST commit of the
+        // surface. Committing with the buffer attached before that configure
+        // is a protocol error ("xdg_surface has never been configured"; KWin
+        // tolerated the early attach, wlroots enforces it), while never
+        // committing deadlocks the handshake and the window never maps.
+        // The protocol-correct trigger is an EMPTY commit (no attach) here,
+        // then attach + commit in the first Configure handler.
         surface.commit();
+        self.surface = Some(surface);
+        self.buffer = Some(buffer);
         self.toplevel = Some((xdg_surface, toplevel));
     }
 }
@@ -171,6 +184,63 @@ impl Dispatch<wl_surface::WlSurface, ()> for State {
     }
 }
 
+impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
+    fn event(
+        _s: &mut Self,
+        wm_base: &xdg_wm_base::XdgWmBase,
+        e: xdg_wm_base::Event,
+        _d: &(),
+        _c: &Connection,
+        _q: &QueueHandle<Self>,
+    ) {
+        if let xdg_wm_base::Event::Ping { serial } = e {
+            wm_base.pong(serial);
+        }
+    }
+}
+
+impl Dispatch<xdg_surface::XdgSurface, ()> for State {
+    fn event(
+        state: &mut Self,
+        xdg: &xdg_surface::XdgSurface,
+        e: xdg_surface::Event,
+        _d: &(),
+        _c: &Connection,
+        _q: &QueueHandle<Self>,
+    ) {
+        if let xdg_surface::Event::Configure { serial } = e {
+            xdg.ack_configure(serial);
+            // The first configure is the compositor's go-ahead for mapping:
+            // only now may the surface be attached + committed (the earlier
+            // empty commit only triggered this configure; attaching the
+            // buffer before it would be a protocol error). Later configures
+            // are acked but nothing is redrawn (we have no new content).
+            if !state.configured {
+                if let (Some(surface), Some(buffer)) = (&state.surface, &state.buffer) {
+                    surface.attach(Some(buffer), 0, 0);
+                    surface.commit();
+                }
+                state.configured = true;
+            }
+        }
+    }
+}
+
+impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
+    fn event(
+        _s: &mut Self,
+        _p: &xdg_toplevel::XdgToplevel,
+        e: xdg_toplevel::Event,
+        _d: &(),
+        _c: &Connection,
+        _q: &QueueHandle<Self>,
+    ) {
+        if let xdg_toplevel::Event::Close = e {
+            // The court owns the window lifecycle; nothing to do.
+        }
+    }
+}
+
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
         _state: &mut Self,
@@ -206,49 +276,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
             }
             _ => {}
         }
-    }
-}
-
-impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
-    fn event(
-        _state: &mut Self,
-        wm_base: &xdg_wm_base::XdgWmBase,
-        e: xdg_wm_base::Event,
-        _d: &(),
-        _c: &Connection,
-        _q: &QueueHandle<Self>,
-    ) {
-        if let xdg_wm_base::Event::Ping { serial } = e {
-            wm_base.pong(serial);
-        }
-    }
-}
-
-impl Dispatch<xdg_surface::XdgSurface, ()> for State {
-    fn event(
-        state: &mut Self,
-        xdg: &xdg_surface::XdgSurface,
-        e: xdg_surface::Event,
-        _d: &(),
-        _c: &Connection,
-        _q: &QueueHandle<Self>,
-    ) {
-        if let xdg_surface::Event::Configure { serial, .. } = e {
-            xdg.ack_configure(serial);
-            state.configured = true;
-        }
-    }
-}
-
-impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
-    fn event(
-        _s: &mut Self,
-        _p: &xdg_toplevel::XdgToplevel,
-        _e: xdg_toplevel::Event,
-        _d: &(),
-        _c: &Connection,
-        _q: &QueueHandle<Self>,
-    ) {
     }
 }
 
