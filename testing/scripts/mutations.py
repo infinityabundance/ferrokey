@@ -124,7 +124,7 @@ MUTATIONS = {
         ),
         (
             SERVE_RS,
-            "    sandbox::install_filter().map_err(ServeError::Seccomp)?;",
+            "    sandbox::install_filter(seccomp_gate).map_err(ServeError::Seccomp)?;",
             "    // MUTATION: no-nnp - seccomp install skipped (kernel requires NO_NEW_PRIVS)",
         ),
         (

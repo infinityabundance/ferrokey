@@ -55,6 +55,16 @@ def read_frame(sock: socket.socket):
     return body
 
 
+def read_frame_quiet(sock: socket.socket):
+    """Like `read_frame`, but an abrupt reset (the broker drops the socket
+    at authorize time, e.g. session-scope refusal, §99) reads as EOF instead
+    of raising — a rejected client reports a failed handshake, not a crash."""
+    try:
+        return read_frame(sock)
+    except OSError:
+        return None
+
+
 def main() -> int:
     args = sys.argv[1:]
     sock_path = "/run/ferrokeyd/ferrokeyd.sock"
@@ -144,7 +154,7 @@ def main() -> int:
             name = b"court"
             sock.sendall(frame(OP_HELLO, bytes([PROTOCOL_VERSION]) + struct.pack("<H", len(name)) + name))
             sock.sendall(frame(OP_OPEN_SESSION))
-            body = read_frame(sock)
+            body = read_frame_quiet(sock)
             if body and body[0] == OP_OK:
                 print("handshake: ok")
             else:
@@ -161,7 +171,7 @@ def main() -> int:
                 idx += 1
         elif op == "release-all":
             sock.sendall(frame(OP_RELEASE))
-            body = read_frame(sock)
+            body = read_frame_quiet(sock)
             if body and body[0] == OP_OK:
                 print("release-all: ok")
             else:
@@ -172,7 +182,7 @@ def main() -> int:
             if idx + 1 < len(tokens):
                 idx += 1
             sock.sendall(frame(OP_PING, struct.pack("<I", nonce)))
-            body = read_frame(sock)
+            body = read_frame_quiet(sock)
             if body and body[0] == OP_PONG and struct.unpack("<I", body[1:5])[0] == nonce:
                 print(f"ping: ok ({nonce})")
             else:
@@ -181,7 +191,7 @@ def main() -> int:
         elif op == "expect-error":
             # Send an invalid message and expect an Error reply + teardown.
             sock.sendall(frame(OP_DOWN, struct.pack("<H", 0xFFFF)))
-            body = read_frame(sock)
+            body = read_frame_quiet(sock)
             if body and body[0] == OP_ERROR:
                 print("expect-error: ok (rejected)")
             else:
@@ -190,7 +200,7 @@ def main() -> int:
         elif op == "no-hello":
             # Send OPEN_SESSION without HELLO: must be rejected.
             sock.sendall(frame(OP_OPEN_SESSION))
-            body = read_frame(sock)
+            body = read_frame_quiet(sock)
             if body and body[0] == OP_ERROR:
                 print("no-hello: ok (rejected)")
             else:

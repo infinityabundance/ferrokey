@@ -73,6 +73,13 @@ pub struct DaemonConfig {
     pub service_user: String,
     /// The dedicated service group the runtime drops to (§3).
     pub service_group: String,
+    /// Optional logind session-scope binding (§28, §99): when set, a client
+    /// is authorized only if it lives in the same logind session as the
+    /// broker. The value is the cgroup scope name ("session-N.scope") the
+    /// session manager created for the graphical session; the broker matches
+    /// it against the peer's `session-N.scope` cgroup component. When unset
+    /// the broker authorizes by UID/GID only (the Phase-3 baseline §27).
+    pub session_scope: Option<String>,
 }
 
 impl Default for DaemonConfig {
@@ -88,6 +95,7 @@ impl Default for DaemonConfig {
             socket_mode: 0o666,
             service_user: "ferrokeyd".into(),
             service_group: "ferrokeyd".into(),
+            session_scope: None,
         }
     }
 }
@@ -220,6 +228,17 @@ impl DaemonConfig {
                     .into(),
             ));
         }
+        if let Some(scope) = &self.session_scope {
+            // The scope name is matched against cgroup path components; it is
+            // NEVER used as a filesystem path, so it must be a strict
+            // `session-N.scope` identifier with no separators or traversal.
+            if !is_valid_session_scope(scope) {
+                return Err(ConfigError::Invalid(format!(
+                    "session_scope {scope:?} is not a valid logind scope name \
+                     (expected the form 'session-N.scope')"
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -266,6 +285,18 @@ fn has_duplicates<T: PartialEq>(items: &[T]) -> bool {
         .iter()
         .enumerate()
         .any(|(i, a)| items.iter().skip(i + 1).any(|b| a == b))
+}
+
+/// A logind session scope name: `session-N.scope` (N = decimal digits).
+/// Strict by construction — the value is compared against the `session-N.scope`
+/// component of cgroup paths and must never contain path syntax.
+pub fn is_valid_session_scope(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if !bytes.starts_with(b"session-") || !bytes.ends_with(b".scope") {
+        return false;
+    }
+    let digits = &bytes[b"session-".len()..bytes.len() - ".scope".len()];
+    !digits.is_empty() && digits.iter().all(u8::is_ascii_digit)
 }
 
 /// Configuration errors.
@@ -409,5 +440,52 @@ mod tests {
     fn duplicate_uids_rejected() {
         let yaml = "socket_path: /run/ferrokeyd/x.sock\nallowed_uids: [1000, 1000]\n";
         assert!(DaemonConfig::parse(yaml).is_err());
+    }
+
+    // ── §28/§99: session-scope binding ────────────────────────────────────
+
+    #[test]
+    fn session_scope_absent_by_default() {
+        let cfg = DaemonConfig::parse(&valid_yaml()).unwrap();
+        assert_eq!(cfg.session_scope, None);
+    }
+
+    #[test]
+    fn valid_session_scope_parses() {
+        let yaml = format!("{}\nsession_scope: session-2.scope\n", valid_yaml());
+        let cfg = DaemonConfig::parse(&yaml).unwrap();
+        assert_eq!(cfg.session_scope.as_deref(), Some("session-2.scope"));
+    }
+
+    #[test]
+    fn malformed_session_scope_rejected() {
+        // An empty YAML value parses as `None` (absent), not as an empty
+        // string — the absent case is `session_scope_absent_by_default`.
+        for bad in [
+            "session-2",
+            "session-x.scope",
+            "session-2.scope/",
+            "/session-2.scope",
+            "session-2.scope/..",
+            "../session-2.scope",
+            "session--2.scope",
+            "session-2..scope",
+        ] {
+            let yaml = format!("{}\nsession_scope: {bad}\n", valid_yaml());
+            assert!(DaemonConfig::parse(&yaml).is_err(), "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn session_scope_validator_is_strict() {
+        assert!(is_valid_session_scope("session-2.scope"));
+        assert!(is_valid_session_scope("session-0.scope"));
+        assert!(is_valid_session_scope("session-123456789.scope"));
+        assert!(!is_valid_session_scope("session-2"));
+        assert!(!is_valid_session_scope("session-x.scope"));
+        assert!(!is_valid_session_scope("session-2.scope/.."));
+        assert!(!is_valid_session_scope("../session-2.scope"));
+        assert!(!is_valid_session_scope("session-2..scope"));
+        assert!(!is_valid_session_scope(""));
     }
 }

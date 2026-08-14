@@ -214,6 +214,7 @@ rows = [
     ("security", "Long-run soak stability",                   ["soak"]),
     ("security", "Socket-path hijack resistance (§101)",      ["socket-hijack"]),
     ("security", "Cross-user authorization (§100)",            ["cross-user"]),
+    ("security", "Session-scope binding (§28, §99)",            ["session-lifetime"]),
     ("security", "Device lifetime / restart (§73)",            ["device-lifetime"]),
     ("security", "KASAN+UBSAN+LOCKDEP kernel court (§66–§68)", ["kernel-debug"]),
     ("security", "Deliberate regression mutations (§93)",     ["mutation"]),

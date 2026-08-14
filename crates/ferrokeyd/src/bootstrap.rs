@@ -102,8 +102,11 @@ pub fn run(config_path: Option<PathBuf>) -> Result<(), StartError> {
         .arg("--uid")
         .arg(join_u32s(&config.allowed_uids))
         .arg("--gid")
-        .arg(join_u32s(&config.allowed_gids))
-        .stdin(Stdio::null());
+        .arg(join_u32s(&config.allowed_gids));
+    if let Some(scope) = &config.session_scope {
+        serve.arg("--session-scope").arg(scope);
+    }
+    serve.stdin(Stdio::null());
     // §3, §41: the runtime must never start as root. `command_with_dropped_identity`
     // attaches a pre-exec closure (isolated unsafe, §82) that drops
     // supplementary groups, then gid, then uid — all before exec.

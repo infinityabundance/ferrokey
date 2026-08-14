@@ -137,6 +137,7 @@ fn parse_serve_args(args: &[String]) -> Result<ferrokeyd::serve::ServeArgs> {
         per_second: 200,
         max_held_keys: 16,
         device_name: ferrokey_uinput::DEVICE_NAME.into(),
+        session_scope: None,
         allow_root: false,
     };
     let mut i = 1; // args[0] is the handoff fd (first positional), parsed below
@@ -180,6 +181,18 @@ fn parse_serve_args(args: &[String]) -> Result<ferrokeyd::serve::ServeArgs> {
             }
             "--gid" => {
                 params.allowed_gids = parse_u32_list(args.get(i + 1))?;
+                i += 2;
+            }
+            "--session-scope" => {
+                let scope = args
+                    .get(i + 1)
+                    .context("--session-scope requires a value")?;
+                if !ferrokeyd::config::is_valid_session_scope(scope) {
+                    anyhow::bail!(
+                        "invalid --session-scope {scope:?}: expected the form 'session-N.scope'"
+                    );
+                }
+                params.session_scope = Some(scope.clone());
                 i += 2;
             }
             "--allow-root" => {
@@ -233,13 +246,45 @@ fn parse_u32_list(s: Option<&String>) -> Result<Vec<u32>> {
 // sandbox-probe — host-safe proof of the exact runtime filter
 // ---------------------------------------------------------------------------
 
-fn cmd_sandbox_probe(_args: &[String]) -> Result<()> {
+fn cmd_sandbox_probe(args: &[String]) -> Result<()> {
     use ferrokeyd::sandbox;
+    // Optional --session-scope exercises the exact session-gated filter
+    // (the /proc dirfd is opened first, exactly as serve does pre-freeze).
+    let mut scope: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--session-scope" => {
+                let s = args
+                    .get(i + 1)
+                    .context("--session-scope requires a value")?;
+                if !ferrokeyd::config::is_valid_session_scope(s) {
+                    anyhow::bail!(
+                        "invalid --session-scope {s:?}: expected the form 'session-N.scope'"
+                    );
+                }
+                scope = Some(s.clone());
+                i += 2;
+            }
+            other => anyhow::bail!("unknown sandbox-probe argument: {other}"),
+        }
+    }
+    let gate = match &scope {
+        Some(s) => {
+            let g = ferrokeyd::session_scope::SessionScopeGate::open(s)
+                .map_err(|e| anyhow::anyhow!("cannot open the session-scope gate: {e}"))?;
+            Some(sandbox::SessionGate {
+                proc_dirfd: g.proc_dirfd(),
+                openat_flags: sandbox::SessionGate::READ_CGROUP_FLAGS,
+            })
+        }
+        None => None,
+    };
     // The probe mirrors the runtime freeze sequence for the seccomp part:
     // NO_NEW_PRIVS (required before loading a filter), install, prove.
     ferrokeyd::security::set_no_new_privs()?;
-    sandbox::install_filter()?;
-    let report = sandbox::prove_enforced()?;
+    sandbox::install_filter(gate)?;
+    let report = sandbox::prove_enforced(gate)?;
     println!("seccomp enforcement probe: {report}");
     if !report.all_denied() {
         anyhow::bail!("sandbox probe FAILED: not all forbidden syscalls were denied");

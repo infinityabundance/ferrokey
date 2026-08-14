@@ -96,7 +96,18 @@ Nothing else. In particular, at runtime the broker **cannot**:
 * open or reopen any file or device (`open`/`openat`/`openat2`/`creat` are
   not in the allowlist) — including `/dev/uinput`, `/dev/input/event*`,
   `/dev/mem`, `/dev/kmem`, `/dev/kvm`, block devices, procfs/sysfs control
-  files (§35, §60);
+  files (§35, §60). The one exception is the optional **session gate** (§28,
+  §99): when the config binds the broker to a logind session scope, a single
+  `openat` is allowed with `dirfd` equal to the pre-opened `/proc` fd AND
+  `flags == O_RDONLY|O_CLOEXEC` — the exact shape of the peer cgroup lookup
+  (`openat(proc_fd, "<pid>/cgroup", …)`). The seccomp filter bakes the
+  concrete dirfd/flags in at freeze time; write/open-any flags, `AT_FDCWD`
+  and every other dirfd stay EPERM, and the broker code validates the path
+  (a decimal pid, nothing else). The residual of this widening is that a
+  compromised broker could read *other* world-readable `/proc/<pid>/…`
+  files through the gate with `O_RDONLY`; it cannot open write paths
+  (`/dev/uinput` needs `O_WRONLY`, block devices `O_RDWR`), so injection
+  authority is unchanged.
 * issue any `ioctl` (§14, §61) — uinput configuration is impossible;
 * create any socket of any family (§31, §62) — AF_UNIX sockets were created
   before the freeze; AF_INET/AF_INET6/AF_PACKET probes return EPERM;
@@ -175,17 +186,16 @@ especially the pre-created virtual keyboard (§112).
   trigger a transient pointer-grab artifact in the *guest compositor*
   (proven a guest-stack property; Ferrokey's kernel-level delivery is
   verified by the courts via evtest). See `testing/courts/full-desktop/`.
-* **Session binding is architected, not implemented**: SO_PEERCRED binds the
-  broker to a UID/GID (§27), not to a logind session/seat. The long-term
-  design binds each broker instance to its active graphical login session
-  (§28) so that *this instance serves this session*. Full logind
-  integration was not implemented in Phase 3 because the runtime broker's
-  seccomp allowlist forbids the `openat`/dbus surface it would need, and the
-  §96 release gates do not require it; the design is modular
-  (`allowed_uids`/`allowed_gids` is the plug point) and testable when
-  implemented. The lock-screen policy is defined in
-  `docs/security-architecture.md`; the session-lifetime court (§99)
-  applies once session binding exists.
-* **Same-UID processes** are not distinguished by SO_PEERCRED alone: any
-  process running as an allowed UID may type. This is the acknowledged
-  baseline (§114); session/seat binding closes the gap.
+* **Session binding is implemented for the graphical session (§28, §99)**:
+  when the root-owned config sets `session_scope`, the broker binds to that
+  logind session scope — a client is authorized only if its cgroup contains
+  the same `session-N.scope` component. The binding is enforced post-freeze
+  by a single narrowly-gated `openat` (the peer cgroup lookup; see "After
+  the sandbox") and is exercised by the `session-lifetime` court. Without
+  `session_scope`, the broker authorizes by UID/GID only (§27) — the
+  documented Phase-3 baseline. Same-UID processes outside the bound session
+  are refused (§99).
+* **Same-UID processes** are not distinguished by SO_PEERCRED alone when no
+  session is bound: any process running as an allowed UID may type. This is
+  the acknowledged baseline (§114); the `session_scope` binding closes the
+  gap for deployments that enable it.

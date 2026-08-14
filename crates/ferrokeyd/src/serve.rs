@@ -51,6 +51,9 @@ pub struct ServeArgs {
     pub socket_mode: u32,
     pub allowed_uids: Vec<u32>,
     pub allowed_gids: Vec<u32>,
+    /// Optional logind session-scope binding (§28, §99): clients must live
+    /// in this session scope.
+    pub session_scope: Option<String>,
     pub max_connections: usize,
     pub burst: u32,
     pub per_second: u32,
@@ -186,17 +189,44 @@ pub fn run(args: ServeArgs) -> Result<(), ServeError> {
         args.socket_path.display()
     );
 
+    // ── Session binding (§28, §99): the /proc dirfd for the peer cgroup
+    //    lookup is opened BEFORE the freeze (the seccomp gate bakes the fd
+    //    number into the runtime filter; the fd inventory accounts for it).
+    let session_gate = match &args.session_scope {
+        Some(scope) => {
+            let gate = crate::session_scope::SessionScopeGate::open(scope)
+                .map_err(|e| ServeError::Io(format!("cannot open the session-scope gate: {e}")))?;
+            log::info!(
+                "serve: bound to session scope '{}' (proc dirfd {})",
+                gate.bound_scope(),
+                gate.proc_dirfd()
+            );
+            Some(gate)
+        }
+        None => None,
+    };
+
     // ── SECURITY FREEZE (§41) ────────────────────────────────────────────
-    let expected_fds = security::expected_fds(&[device_fd_num, listener_fd]);
+    let mut extra_fds = vec![device_fd_num, listener_fd];
+    if let Some(g) = &session_gate {
+        extra_fds.push(g.proc_dirfd());
+    }
+    let expected_fds = security::expected_fds(&extra_fds);
     let report = security::verify_before_freeze(args.allow_root, &expected_fds)?;
-    sandbox::install_filter().map_err(ServeError::Seccomp)?;
-    let probes = sandbox::prove_enforced().map_err(|e| ServeError::Probe(e.to_string()))?;
+    let seccomp_gate = session_gate.as_ref().map(|g| sandbox::SessionGate {
+        proc_dirfd: g.proc_dirfd(),
+        openat_flags: sandbox::SessionGate::READ_CGROUP_FLAGS,
+    });
+    sandbox::install_filter(seccomp_gate).map_err(ServeError::Seccomp)?;
+    let probes =
+        sandbox::prove_enforced(seccomp_gate).map_err(|e| ServeError::Probe(e.to_string()))?;
     if !probes.all_denied() {
         return Err(ServeError::Probe(format!(
             "forbidden syscalls were not all denied: {probes:?}"
         )));
     }
     log::info!("serve: sandbox frozen — {report}");
+    log::info!("serve: enforcement probes — {probes}");
 
     phase
         .transition(BrokerPhase::Initializing, BrokerPhase::DeviceConfigured)
@@ -219,6 +249,7 @@ pub fn run(args: ServeArgs) -> Result<(), ServeError> {
         max_held_keys: args.max_held_keys,
         allowed_uids: args.allowed_uids.clone(),
         allowed_gids: args.allowed_gids.clone(),
+        session_gate,
         phase,
     };
     log::info!("serve: accepting clients on {}", args.socket_path.display());
@@ -257,6 +288,8 @@ struct Runtime {
     max_held_keys: usize,
     allowed_uids: Vec<u32>,
     allowed_gids: Vec<u32>,
+    /// Session-scope binding (§28, §99); `None` = UID/GID whitelist only.
+    session_gate: Option<crate::session_scope::SessionScopeGate>,
     phase: PhaseGuard,
 }
 
@@ -408,17 +441,27 @@ impl Runtime {
         }
     }
 
-    /// SO_PEERCRED authorization against the whitelist (§27).
+    /// SO_PEERCRED authorization against the whitelist (§27), plus the
+    /// optional session-scope binding (§28, §99): a client is accepted only
+    /// when its UID/GID is whitelisted AND (if a session is bound) it lives
+    /// in the bound logind session scope.
     fn authorize(&self, stream: &UnixStream) -> Result<ferrokey_protocol::PeerIdentity, String> {
         let peer = peer_identity(stream).map_err(|e| format!("SO_PEERCRED failed: {e}"))?;
-        if self.allowed_uids.contains(&peer.uid) || self.allowed_gids.contains(&peer.gid) {
-            Ok(peer)
-        } else {
-            Err(format!(
+        if !(self.allowed_uids.contains(&peer.uid) || self.allowed_gids.contains(&peer.gid)) {
+            return Err(format!(
                 "{peer} not in allowed_uids {:?} / allowed_gids {:?}",
                 self.allowed_uids, self.allowed_gids
-            ))
+            ));
         }
+        if let Some(gate) = &self.session_gate {
+            if !gate.peer_is_in_bound_session(peer.pid) {
+                return Err(format!(
+                    "{peer} is not in the bound session scope '{}' — refusing (§99)",
+                    gate.bound_scope()
+                ));
+            }
+        }
+        Ok(peer)
     }
 
     /// Read + process all available messages from one client.

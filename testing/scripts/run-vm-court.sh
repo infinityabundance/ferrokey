@@ -16,6 +16,14 @@ COURT="${1:?usage: run-vm-court.sh <court> [profile] [distro]}"
 PROFILE="${2:-x11}"
 DISTRO="${3:-debian-12}"
 
+# The cargo build-cache volumes. Overridable so the mutation runner can
+# isolate its (deliberately mutated) builds from the production artifacts:
+# a mutated binary left in the shared volume would otherwise be reused by a
+# later court run (cargo fingerprinting cannot tell two /repo mounts apart
+# — the mutation suite mounts its disposable copy at the same path).
+PAYLOAD_TARGET_VOLUME="${PAYLOAD_TARGET_VOLUME:-ferrokey-payload-target}"
+PAYLOAD_TARGETS_VOLUME="${PAYLOAD_TARGETS_VOLUME:-ferrokey-payload-targets}"
+
 if [ ! -f "$REPO_ROOT/testing/courts/$COURT/court.sh" ]; then
     echo "no court script at testing/courts/$COURT/court.sh"
     exit 1
@@ -56,7 +64,7 @@ echo "==> building product binaries (builder image)"
     -v "$REPO_ROOT:/repo:ro" \
     -v "$PAYLOAD_DIR/bin:/out" \
     -v ferrokey-payload-cargo:/usr/local/cargo/registry \
-    -v ferrokey-payload-target:/target \
+    -v "$PAYLOAD_TARGET_VOLUME:/target" \
     -e CARGO_HOME=/usr/local/cargo \
     -e CARGO_TARGET_DIR=/target \
     -e CARGO_INCREMENTAL=0 \
@@ -70,7 +78,7 @@ echo "==> building court targets (targets image)"
     --network "${COURT_NETWORK:-bridge}" \
     -v "$REPO_ROOT/testing/targets:/targets:ro" \
     -v "$PAYLOAD_DIR/bin:/out" \
-    -v ferrokey-payload-targets:/target \
+    -v "$PAYLOAD_TARGETS_VOLUME:/target" \
     -e CARGO_TARGET_DIR=/target \
     -e CARGO_INCREMENTAL=0 \
     -e DISPLAY= -e WAYLAND_DISPLAY= -e XDG_RUNTIME_DIR=/tmp \

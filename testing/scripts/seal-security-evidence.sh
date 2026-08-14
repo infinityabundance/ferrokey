@@ -123,6 +123,7 @@ rows = [
     ("SEC.KERNEL.KASAN",          "kernel-debug", ("SEC.KERNEL.KASAN_CLEAN",)),
     ("SEC.SYSTEMD.HARDENED",      "systemd", ("SEC.SYSTEMD.001", "SEC.SYSTEMD.008")),
     ("SEC.SOAK.BOUNDED",          "soak", ("SEC.SOAK.001", "SEC.SOAK.002", "SEC.SOAK.003")),
+    ("SEC.SESSION.BOUND",         "session-lifetime", ("SESSION.001", "SESSION.002", "SESSION.003", "SESSION.004")),
 ]
 for gate, court, labels in rows:
     result, detail = gate_ok(gate, court, *labels)

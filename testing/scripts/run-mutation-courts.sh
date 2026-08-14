@@ -25,18 +25,43 @@ sanitize_env
 DEFAULT_KINDS="run-as-root keep-caps no-nnp allow-inet allow-ioctl allow-openat"
 KINDS=(${MUTATION_KINDS:-$DEFAULT_KINDS})
 MUTATION_RUN_DIR="${MUTATION_RUN_DIR:-}"
+# Docker mounts `-v` sources from the DAEMON's working directory; a relative
+# path is interpreted as a volume name (and rejected for containing '/').
+# Resolve the run dir to an absolute path so the evidence pull always works.
+if [ -n "$MUTATION_RUN_DIR" ]; then
+    mkdir -p "$MUTATION_RUN_DIR"
+    MUTATION_RUN_DIR="$(cd "$MUTATION_RUN_DIR" && pwd)"
+fi
 
 host_safety_preflight
 
+# The mutation builds must NEVER share the production cargo target volumes:
+# they compile a deliberately mutated copy of the repo mounted at the same
+# /repo path, so cargo fingerprinting cannot distinguish it from the real
+# tree — a mutated binary would then be reused by later court runs (the
+# session-lifetime court once ran with the allow-openat-mutated ferrokeyd
+# and reported every openat allowed). Isolate the mutations onto their own
+# volumes, recreated so each suite starts from empty caches.
+export PAYLOAD_TARGET_VOLUME="ferrokey-payload-target-mut"
+export PAYLOAD_TARGETS_VOLUME="ferrokey-payload-targets-mut"
+"$DOCKER" volume rm -f ferrokey-payload-target-mut ferrokey-payload-targets-mut >/dev/null 2>&1 || true
+"$DOCKER" volume create ferrokey-payload-target-mut >/dev/null
+"$DOCKER" volume create ferrokey-payload-targets-mut >/dev/null
+
 # The mutation runs overwrite /court/state/evidence/kernel-security (they
 # boot the same court name in MUTATION mode, and their failing receipts must
-# stay visible for check-mutation.py). Snapshot the CLEAN run's evidence
-# first and restore it after every mutation so the suite's later evidence
-# pull + security seal (§96) still read the non-mutated court record.
+# stay visible for check-mutation.py). Snapshot the CLEAN run's evidence AND
+# its meta.json first and restore both after every mutation so the suite's
+# later evidence pull + security seal (§96) still read the non-mutated court
+# record (the meta.json is otherwise left pointing at the last mutation's
+# FAIL verdict).
 "$DOCKER" run --rm -v ferrokey-vm-state:/court/state alpine sh -c \
     'rm -rf /court/state/evidence/kernel-security.snapshot; \
      if [ -d /court/state/evidence/kernel-security ]; then \
          cp -a /court/state/evidence/kernel-security /court/state/evidence/kernel-security.snapshot; \
+     fi; \
+     if [ -f /court/state/evidence/kernel-security.meta.json ]; then \
+         cp -a /court/state/evidence/kernel-security.meta.json /court/state/evidence/kernel-security.meta.json.snapshot; \
      fi'
 
 WORK=""
@@ -120,11 +145,17 @@ for kind in "${KINDS[@]}"; do
     # ── 5. Restore the clean kernel-security evidence (see the snapshot
     #        above): the mutation's failing record is already preserved under
     #        $KIND_DIR, so the volume can go back to the non-mutated court
-    #        record for the suite's evidence pull and security seal.
+    #        record for the suite's evidence pull and security seal. The
+    #        snapshot is COPIED back (never moved): every mutation restores
+    #        the same clean record.
     "$DOCKER" run --rm -v ferrokey-vm-state:/court/state alpine sh -c \
         'rm -rf /court/state/evidence/kernel-security; \
          if [ -d /court/state/evidence/kernel-security.snapshot ]; then \
-             mv /court/state/evidence/kernel-security.snapshot /court/state/evidence/kernel-security; \
+             cp -a /court/state/evidence/kernel-security.snapshot /court/state/evidence/kernel-security; \
+         fi; \
+         rm -f /court/state/evidence/kernel-security.meta.json; \
+         if [ -f /court/state/evidence/kernel-security.meta.json.snapshot ]; then \
+             cp -a /court/state/evidence/kernel-security.meta.json.snapshot /court/state/evidence/kernel-security.meta.json; \
          fi'
 
     rm -rf "$WORK"

@@ -55,6 +55,10 @@ const EPERM: u32 = 1;
 /// `seccomp_data` offsets.
 const SECCOMP_DATA_NR: u32 = 0;
 const SECCOMP_DATA_ARCH: u32 = 4;
+// `struct seccomp_data` offsets: nr(0), arch(4), instruction_pointer(8),
+// args[0](16), args[1](24), args[2](32), args[3](40).
+const SECCOMP_DATA_0: u32 = 16;
+const SECCOMP_DATA_2: u32 = 32;
 
 /// `AUDIT_ARCH_*` values (uapi/linux/audit.h).
 const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
@@ -184,6 +188,27 @@ const AARCH64: ArchAllowlist = ArchAllowlist {
     syscalls: AARCH64_SYSCALLS,
 };
 
+/// The post-freeze session-gate parameters baked into the seccomp filter
+/// (§28, §99): `openat` is allowed ONLY when `dirfd == proc_dirfd` AND
+/// `flags == O_RDONLY|O_CLOEXEC` — the exact shape of the peer cgroup lookup
+/// in `session_scope::SessionScopeGate::peer_scope`. Every other open path
+/// (AT_FDCWD, other dirfds, write/execute flags — i.e. `/dev/uinput`,
+/// `/dev/input/*`, block devices, control files) stays EPERM (§35, §60).
+/// The filter builder bakes the concrete values in at freeze time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionGate {
+    /// The pre-opened `/proc` directory fd (O_PATH|O_DIRECTORY|O_CLOEXEC).
+    pub proc_dirfd: i32,
+    /// `O_RDONLY|O_CLOEXEC` (the only flag combination the peer lookup uses).
+    pub openat_flags: u32,
+}
+
+impl SessionGate {
+    /// `O_RDONLY | O_CLOEXEC` as the kernel sees them in `openat`'s flags
+    /// argument (O_RDONLY = 0, O_CLOEXEC = 0o2000000 on every Linux arch).
+    pub const READ_CGROUP_FLAGS: u32 = 0o2_000_000;
+}
+
 /// Build the BPF program: arch dispatch, then per-arch allowlist.
 ///
 /// Program layout:
@@ -202,11 +227,11 @@ const AARCH64: ArchAllowlist = ArchAllowlist {
 /// Panics if the assembled jump offsets exceed `u8` (only possible if the
 /// allowlists were extended past ~255 instructions, which the unit tests
 /// would immediately catch).
-pub fn build_filter_program() -> Vec<BpfInsn> {
+pub fn build_filter_program(gate: Option<SessionGate>) -> Vec<BpfInsn> {
     let mut prog = Vec::new();
     prog.push(BpfInsn::ld_abs(SECCOMP_DATA_ARCH));
 
-    let x86_chain_len = allowlist_chain_len(X86_64.syscalls);
+    let x86_chain_len = allowlist_chain_len(X86_64.syscalls, X86_64_OPENAT, gate);
     let x86_chain_start = 4; // 0..=3: dispatch header
     let aarch64_chain_start = 4 + x86_chain_len;
 
@@ -214,7 +239,7 @@ pub fn build_filter_program() -> Vec<BpfInsn> {
     prog.push(BpfInsn::jeq_k(
         X86_64.arch,
         u8::try_from(x86_chain_start - 2).expect("chain length fits"),
-        1, // not x86_64: skip to the aarch64 check
+        0, // not x86_64: fall through to the aarch64 check (jf=0)
     ));
     // If arch == aarch64, jump (from next_ip=3) to the aarch64 chain.
     prog.push(BpfInsn::jeq_k(
@@ -224,31 +249,68 @@ pub fn build_filter_program() -> Vec<BpfInsn> {
     ));
     prog.push(BpfInsn::ret_k(SECCOMP_RET_KILL_PROCESS));
 
-    prog.extend(allowlist_chain(X86_64.syscalls));
-    prog.extend(allowlist_chain(AARCH64.syscalls));
+    prog.extend(allowlist_chain(X86_64.syscalls, X86_64_OPENAT, gate));
+    prog.extend(allowlist_chain(AARCH64.syscalls, AARCH64_OPENAT, gate));
     debug_assert_eq!(
         prog.len(),
-        4 + x86_chain_len + allowlist_chain_len(AARCH64.syscalls)
+        4 + x86_chain_len + allowlist_chain_len(AARCH64.syscalls, AARCH64_OPENAT, gate)
     );
     prog
 }
 
-fn allowlist_chain_len(syscalls: &[u32]) -> usize {
-    // LD nr + (JEQ + RET ALLOW) * N + RET EPERM
-    1 + 2 * syscalls.len() + 1
+fn allowlist_chain_len(syscalls: &[u32], _openat_nr: u32, gate: Option<SessionGate>) -> usize {
+    // LD nr + (JEQ + RET ALLOW) * N + terminator. When the session gate is
+    // active, the openat entry is APPENDED as a 7-insn block (JEQ + the
+    // 6-insn gate: LD args/args JEQ/args JEQ/ALLOW/EPERM) and the block's
+    // own EPERM is the terminator; otherwise a single trailing EPERM closes
+    // the chain.
+    let terminator = if gate.is_some() { 7 } else { 1 };
+    1 + 2 * syscalls.len() + terminator
 }
 
-/// `LD nr; [JEQ s (jt=0, jf=1); RET ALLOW]×N; RET EPERM`
-fn allowlist_chain(syscalls: &[u32]) -> Vec<BpfInsn> {
-    let mut chain = Vec::with_capacity(allowlist_chain_len(syscalls));
+/// `LD nr; [JEQ s (jt=0, jf=1); RET ALLOW]×N; RET EPERM`. When the session
+/// gate is active, a gated `openat` entry is appended:
+///
+/// ```text
+/// entry: JEQ openat (jt=0 → gate1, jf=5 → gate6 EPERM)
+/// gate1: LD args[0]
+/// gate2: JEQ proc_dirfd (jt=0 → gate3, jf=3 → gate6 EPERM)
+/// gate3: LD args[2]
+/// gate4: JEQ read_flags  (jt=0 → gate5 ALLOW, jf=1 → gate6 EPERM)
+/// gate5: RET ALLOW
+/// gate6: RET EPERM
+/// ```
+///
+/// `openat` is NOT in the base allowlists (post-freeze the broker must not
+/// open anything); the gate is the only post-freeze filesystem reach, and
+/// only for the pre-opened `/proc` dirfd with `O_RDONLY|O_CLOEXEC` (§28,
+/// §35, §99). The concrete dirfd/flags are baked in at freeze time.
+fn allowlist_chain(syscalls: &[u32], openat_nr: u32, gate: Option<SessionGate>) -> Vec<BpfInsn> {
+    let mut chain = Vec::with_capacity(allowlist_chain_len(syscalls, openat_nr, gate));
     chain.push(BpfInsn::ld_abs(SECCOMP_DATA_NR));
     for &nr in syscalls {
         chain.push(BpfInsn::jeq_k(nr, 0, 1)); // equal → next insn (ALLOW)
         chain.push(BpfInsn::ret_k(SECCOMP_RET_ALLOW));
     }
+    if let Some(g) = gate {
+        // match → gate1 (next insn); miss → gate6 (the block's EPERM).
+        chain.push(BpfInsn::jeq_k(openat_nr, 0, 5));
+        chain.push(BpfInsn::ld_abs(SECCOMP_DATA_0));
+        chain.push(BpfInsn::jeq_k(g.proc_dirfd as u32, 0, 3));
+        chain.push(BpfInsn::ld_abs(SECCOMP_DATA_2));
+        chain.push(BpfInsn::jeq_k(g.openat_flags, 0, 1));
+        chain.push(BpfInsn::ret_k(SECCOMP_RET_ALLOW));
+        chain.push(BpfInsn::ret_k(SECCOMP_RET_ERRNO | EPERM));
+        return chain;
+    }
     chain.push(BpfInsn::ret_k(SECCOMP_RET_ERRNO | EPERM));
     chain
 }
+
+/// The arch-specific `openat` syscall number (257 = x86_64, 56 = aarch64;
+/// the syscall tables in the unit tests pin these).
+const X86_64_OPENAT: u32 = 257;
+const AARCH64_OPENAT: u32 = 56;
 
 /// Install the runtime filter via `prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER)`.
 ///
@@ -262,8 +324,8 @@ fn allowlist_chain(syscalls: &[u32]) -> Vec<BpfInsn> {
 ///   `open` and socket-family syscalls are impossible (§14, §35, §31).
 /// * Postcondition: on `Ok`, the process is seccomp-filtered; on `Err`, no
 ///   filter is installed and the caller must refuse to serve (§105, §106).
-pub fn install_filter() -> io::Result<()> {
-    let prog = build_filter_program();
+pub fn install_filter(gate: Option<SessionGate>) -> io::Result<()> {
+    let prog = build_filter_program(gate);
     // The kernel requires the program length to fit in a u16.
     let len = u16::try_from(prog.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "seccomp program too long"))?;
@@ -329,6 +391,28 @@ pub struct ProbeReport {
     pub openat_event_dev_denied: bool,
     /// `openat` on a privileged device path was denied (§60).
     pub openat_privileged_dev_denied: bool,
+    /// Session-gate probes (§28, §99); `None` when no gate is installed.
+    pub session_gate: Option<SessionGateReport>,
+}
+
+/// The session-gate enforcement probes: the peer cgroup lookup is the one
+/// post-freeze `openat`, and it must be usable ONLY in its exact shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SessionGateReport {
+    /// `openat(proc_fd, "self/cgroup", O_RDONLY|O_CLOEXEC)` was NOT refused
+    /// with EPERM (the lookup is possible).
+    pub cgroup_read_allowed: bool,
+    /// `openat(proc_fd, "self/cgroup", O_WRONLY)` was EPERM.
+    pub write_flags_denied: bool,
+    /// `openat(AT_FDCWD, "/proc/self/cgroup", O_RDONLY|O_CLOEXEC)` was
+    /// EPERM (no open via the working directory — §35).
+    pub fdcwd_denied: bool,
+}
+
+impl SessionGateReport {
+    pub fn all_denied(&self) -> bool {
+        self.cgroup_read_allowed && self.write_flags_denied && self.fdcwd_denied
+    }
 }
 
 impl ProbeReport {
@@ -340,6 +424,7 @@ impl ProbeReport {
             && self.openat_denied
             && self.openat_event_dev_denied
             && self.openat_privileged_dev_denied
+            && self.session_gate.is_none_or(|s| s.all_denied())
     }
 }
 
@@ -357,7 +442,16 @@ impl std::fmt::Display for ProbeReport {
             self.openat_denied,
             self.openat_event_dev_denied,
             self.openat_privileged_dev_denied
-        )
+        )?;
+        if let Some(s) = self.session_gate {
+            write!(
+                f,
+                " session_cgroup_read_allowed={} session_write_flags_denied={} \
+                 session_fdcwd_denied={}",
+                s.cgroup_read_allowed, s.write_flags_denied, s.fdcwd_denied
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -375,7 +469,7 @@ impl std::fmt::Display for ProbeReport {
 /// # Postconditions
 /// * Every probe ran; `all_denied()` reports whether each was refused.
 #[allow(clippy::similar_names)] // socket_af_inet/inet6/packet are distinct probe facts
-pub fn prove_enforced() -> io::Result<ProbeReport> {
+pub fn prove_enforced(gate: Option<SessionGate>) -> io::Result<ProbeReport> {
     let ioctl_denied = probe_eperm(nix::libc::SYS_ioctl, &[usize::MAX, 0, 0])?;
     let socket_af_inet_denied = probe_fd_denied(nix::libc::SYS_socket, &[2, 1, 0])?; // AF_INET, SOCK_STREAM
     let socket_af_inet6_denied = probe_fd_denied(nix::libc::SYS_socket, &[10, 1, 0])?; // AF_INET6, SOCK_STREAM
@@ -410,6 +504,58 @@ pub fn prove_enforced() -> io::Result<ProbeReport> {
             0,
         ],
     )?;
+    // Session-gate probes (§28, §99): the peer-cgroup lookup must work in its
+    // exact shape and nothing else. `openat(proc_fd, "self/cgroup", …)`
+    // probes the gate with the current process's own cgroup (readable).
+    let session_gate = if let Some(g) = gate {
+        let read_flags = SessionGate::READ_CGROUP_FLAGS as usize;
+        let path = c"self/cgroup";
+        let proc = g.proc_dirfd as usize;
+        // Allowed: the exact lookup shape. A non-EPERM result (a descriptor,
+        // or ENOENT if the kernel is exotic) proves the filter let it through.
+        let cgroup_read_allowed = {
+            let result = unsafe {
+                raw_syscall(
+                    nix::libc::SYS_openat,
+                    &[proc, path.as_ptr() as usize, read_flags, 0],
+                )
+            };
+            if result >= 0 {
+                unsafe { nix::libc::close(result as i32) };
+                true
+            } else {
+                io::Error::last_os_error().raw_os_error() != Some(EPERM_ERRNO)
+            }
+        };
+        // Denied: the same dirfd with write intent (uinput/block-style reopen).
+        let write_flags_denied = probe_fd_denied(
+            nix::libc::SYS_openat,
+            &[
+                proc,
+                path.as_ptr() as usize,
+                nix::libc::O_WRONLY as usize,
+                0,
+            ],
+        )?;
+        // Denied: the same path via AT_FDCWD — the working directory must not
+        // become an open path (§35).
+        let fdcwd_denied = probe_fd_denied(
+            nix::libc::SYS_openat,
+            &[
+                nix::libc::AT_FDCWD as usize,
+                c"/proc/self/cgroup".as_ptr() as usize,
+                read_flags,
+                0,
+            ],
+        )?;
+        Some(SessionGateReport {
+            cgroup_read_allowed,
+            write_flags_denied,
+            fdcwd_denied,
+        })
+    } else {
+        None
+    };
     Ok(ProbeReport {
         ioctl_denied,
         socket_af_inet_denied,
@@ -418,6 +564,7 @@ pub fn prove_enforced() -> io::Result<ProbeReport> {
         openat_denied,
         openat_event_dev_denied,
         openat_privileged_dev_denied,
+        session_gate,
     })
 }
 
@@ -506,7 +653,7 @@ mod tests {
 
     #[test]
     fn program_starts_with_arch_dispatch() {
-        let prog = build_filter_program();
+        let prog = build_filter_program(None);
         // 0: LD arch
         assert_eq!(prog[0], BpfInsn::ld_abs(SECCOMP_DATA_ARCH));
         // 1: JEQ x86_64
@@ -522,14 +669,14 @@ mod tests {
     fn unknown_arch_falls_into_kill() {
         // On a hypothetical third architecture, arch matches neither branch:
         // the second JEQ's jf=0 means "fall through" → RET KILL_PROCESS.
-        let prog = build_filter_program();
+        let prog = build_filter_program(None);
         assert_eq!(prog[2].jf, 0);
         assert_eq!(prog[3].k, SECCOMP_RET_KILL_PROCESS);
     }
 
     #[test]
     fn chain_terminates_with_eperm() {
-        let prog = build_filter_program();
+        let prog = build_filter_program(None);
         let last = prog.last().unwrap();
         assert_eq!(last.code, BPF_RET | BPF_K);
         assert_eq!(last.k, SECCOMP_RET_ERRNO | EPERM);
@@ -537,7 +684,7 @@ mod tests {
 
     #[test]
     fn every_allowlist_entry_has_allow() {
-        let prog = build_filter_program();
+        let prog = build_filter_program(None);
         // Walk the two chains; each JEQ must be followed by RET ALLOW.
         let mut index = 4;
         for syscalls in [X86_64.syscalls, AARCH64.syscalls] {
@@ -560,7 +707,7 @@ mod tests {
 
     #[test]
     fn jumps_land_inside_the_program() {
-        let prog = build_filter_program();
+        let prog = build_filter_program(None);
         for (i, insn) in prog.iter().enumerate() {
             if insn.code == BPF_JMP | BPF_JEQ | BPF_K {
                 for (offset, target) in [(i + 1, insn.jt as usize), (i + 1, insn.jf as usize)] {
@@ -576,9 +723,9 @@ mod tests {
 
     #[test]
     fn dispatch_jump_targets_are_correct() {
-        let prog = build_filter_program();
+        let prog = build_filter_program(None);
         let x86_chain_start = 4;
-        let aarch64_chain_start = 4 + allowlist_chain_len(X86_64.syscalls);
+        let aarch64_chain_start = 4 + allowlist_chain_len(X86_64.syscalls, X86_64_OPENAT, None);
         // JEQ x86_64 at insn 1: next_ip = 2; jt should land on x86_64 chain.
         assert_eq!(prog[1].jt as usize, x86_chain_start - 2);
         // JEQ aarch64 at insn 2: next_ip = 3; jt should land on aarch64 chain.
@@ -716,5 +863,136 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── §28/§99: the session-gate openat block ────────────────────────────
+
+    /// A minimal seccomp-BPF interpreter: returns the verdict constant for
+    /// (arch, syscall nr, args) — ALLOW or ERRNO|EPERM. Only the opcodes the
+    /// builder emits are supported (LD ABS, JEQ K, RET K).
+    fn eval(prog: &[BpfInsn], arch: u32, nr: u32, args: &[u32]) -> u32 {
+        let mut acc: u32 = 0;
+        let mut ip = 0usize;
+        while ip < prog.len() {
+            let insn = &prog[ip];
+            match insn.code {
+                c if c == BPF_LD | BPF_W | BPF_ABS => {
+                    acc = match insn.k {
+                        k if k == SECCOMP_DATA_ARCH => arch,
+                        k if k == SECCOMP_DATA_NR => nr,
+                        k if k == SECCOMP_DATA_0 => args.first().copied().unwrap_or(0),
+                        k if k == SECCOMP_DATA_2 => args.get(2).copied().unwrap_or(0),
+                        other => panic!("unexpected LD offset {other}"),
+                    };
+                    ip += 1;
+                }
+                c if c == BPF_JMP | BPF_JEQ | BPF_K => {
+                    ip += 1 + if acc == insn.k {
+                        insn.jt as usize
+                    } else {
+                        insn.jf as usize
+                    };
+                }
+                c if c == BPF_RET | BPF_K => return insn.k,
+                other => panic!("unsupported insn code {other:#x} at {ip}"),
+            }
+        }
+        panic!("program fell off the end");
+    }
+
+    #[test]
+    fn ungated_filter_denies_every_openat_shape() {
+        let prog = build_filter_program(None);
+        for args in [
+            &[0u32, 0, 0, 0][..],
+            &[usize::MAX as u32, 0, 0o2_000_000, 0][..],
+        ] {
+            for nr in [X86_64_OPENAT, AARCH64_OPENAT] {
+                assert_eq!(
+                    eval(&prog, AUDIT_ARCH_X86_64, nr, args),
+                    SECCOMP_RET_ERRNO | EPERM,
+                    "openat must be denied without the gate"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn gated_filter_allows_only_the_exact_cgroup_lookup() {
+        let gate = SessionGate {
+            proc_dirfd: 9,
+            openat_flags: SessionGate::READ_CGROUP_FLAGS,
+        };
+        let prog = build_filter_program(Some(gate));
+        let flags = SessionGate::READ_CGROUP_FLAGS;
+        let allow = SECCOMP_RET_ALLOW;
+        let eperm = SECCOMP_RET_ERRNO | EPERM;
+        // The exact lookup shape is allowed on both arches (each arch chain
+        // carries its own openat number).
+        for (arch, nr) in [
+            (AUDIT_ARCH_X86_64, X86_64_OPENAT),
+            (AUDIT_ARCH_AARCH64, AARCH64_OPENAT),
+        ] {
+            assert_eq!(
+                eval(&prog, arch, nr, &[9, 0, flags, 0]),
+                allow,
+                "openat(proc_fd, <pid>/cgroup, O_RDONLY|O_CLOEXEC) must pass the gate"
+            );
+        }
+        // Wrong dirfd (including AT_FDCWD), write flags, and every other
+        // syscall number stay EPERM.
+        assert_eq!(
+            eval(&prog, AUDIT_ARCH_X86_64, X86_64_OPENAT, &[8, 0, flags, 0]),
+            eperm
+        );
+        assert_eq!(
+            eval(
+                &prog,
+                AUDIT_ARCH_X86_64,
+                X86_64_OPENAT,
+                &[usize::MAX as u32, 0, flags, 0]
+            ),
+            eperm,
+            "AT_FDCWD must not reach the gate"
+        );
+        assert_eq!(
+            eval(&prog, AUDIT_ARCH_X86_64, X86_64_OPENAT, &[9, 0, 1, 0]),
+            eperm
+        ); // O_WRONLY
+        assert_eq!(
+            eval(&prog, AUDIT_ARCH_X86_64, X86_64_OPENAT, &[9, 0, 2, 0]),
+            eperm
+        ); // O_RDWR
+        assert_eq!(eval(&prog, AUDIT_ARCH_X86_64, 16, &[9, 0, flags, 0]), eperm); // ioctl
+        assert_eq!(
+            eval(&prog, AUDIT_ARCH_X86_64, 0, &[9, 0, flags, 0]),
+            allow,
+            "read stays allowed"
+        );
+    }
+
+    #[test]
+    fn gated_filter_program_shape_is_stable() {
+        let gate = SessionGate {
+            proc_dirfd: 5,
+            openat_flags: SessionGate::READ_CGROUP_FLAGS,
+        };
+        let plain = build_filter_program(None);
+        let gated = build_filter_program(Some(gate));
+        // Each arch chain's trailing EPERM becomes the 7-insn gate block
+        // (a +6 growth per chain).
+        assert_eq!(gated.len(), plain.len() + 12);
+        // The dispatch jumps still land exactly on each arch chain start.
+        let x86_start = 4;
+        assert_eq!(gated[1].jt as usize, x86_start - 2);
+        let arm_start = 4 + allowlist_chain_len(X86_64.syscalls, X86_64_OPENAT, Some(gate));
+        assert_eq!(gated[2].jt as usize, arm_start - 3);
+        // The first gated block (x86_64 chain end) is the openat gate: the
+        // entry JEQ is followed by LD args0 / JEQ dirfd.
+        let entry = x86_start + 1 + 2 * X86_64.syscalls.len();
+        assert_eq!(gated[entry].code, BPF_JMP | BPF_JEQ | BPF_K);
+        assert_eq!(gated[entry].k, X86_64_OPENAT);
+        assert_eq!(gated[entry + 1], BpfInsn::ld_abs(SECCOMP_DATA_0));
+        assert_eq!(gated[entry + 2], BpfInsn::jeq_k(5, 0, 3));
     }
 }

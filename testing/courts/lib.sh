@@ -314,11 +314,13 @@ start_ferrokeyd() {
     # broker drops to the dedicated unprivileged `ferrokeyd` identity with
     # zero capabilities, NO_NEW_PRIVS and seccomp. The config must be
     # root-owned (the daemon refuses user-writable config while privileged,
-    # §45).
-    sudo chown root:root "$PAYLOAD/fixtures/ferrokeyd.yaml"
-    sudo chmod 0644 "$PAYLOAD/fixtures/ferrokeyd.yaml"
+    # §45). An optional config path lets courts bind the broker to a logind
+    # session scope (§28/§99: ferrokeyd-session.yaml).
+    local config="${1:-$PAYLOAD/fixtures/ferrokeyd.yaml}"
+    sudo chown root:root "$config"
+    sudo chmod 0644 "$config"
     sudo -u root env RUST_LOG=info \
-        "$PAYLOAD/bin/ferrokeyd" start --config "$PAYLOAD/fixtures/ferrokeyd.yaml" \
+        "$PAYLOAD/bin/ferrokeyd" start --config "$config" \
         >"$OUT/ferrokeyd.log" 2>&1 &
     FERROKEYD_PID=$!
     sleep 2

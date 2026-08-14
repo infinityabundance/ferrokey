@@ -55,6 +55,7 @@ pub mod sandbox;
 pub mod security;
 pub mod serve;
 pub mod session;
+pub mod session_scope;
 #[allow(unsafe_code)] // §82: async-signal-safe signal handling — documented
 pub mod signals;
 pub mod socket_path;

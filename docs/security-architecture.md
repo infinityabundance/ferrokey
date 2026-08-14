@@ -163,8 +163,15 @@ keyboard.
 
 Authorization identity comes from the kernel via `SO_PEERCRED`; the client
 never supplies a UID. The active broker binds to the authorized desktop UID
-list from the root-owned config. Session/seat binding (logind) is the
-documented long-term hardening.
+list from the root-owned config. **Session/seat binding** (§28, §99): the
+broker may additionally bind to a logind session scope
+(`session_scope: session-N.scope` in the root-owned config). A client is
+then authorized only if its cgroup contains the same session scope — the
+broker's post-freeze peer lookup uses a single narrowly-gated `openat` (see
+`crates/ferrokeyd/src/session_scope.rs` and `sandbox.rs SessionGate`), so a
+same-UID process outside the bound session is refused. The
+`session-lifetime` court proves the in-session client is served, the
+out-of-session client is refused, and the sandbox denials stay intact.
 
 ## Lock-screen and session policy (§29, §99)
 
@@ -178,6 +185,10 @@ authentication surfaces:
 | session inactive / terminated | the broker instance is expected to be stopped by the session manager; the device unregisters with it | `SEC.DEVLIFE.*` + `SEC.STATE.SIGKILL` courts |
 | seat ownership changed | a new session/seat starts its own broker; the old broker must be stopped | restart-safe device lifecycle (§73) |
 
-Future logind integration (session binding) will deactivate the broker's
-keyboard on lock/inactive (§28, §99). Lock-screen OSK support, if ever
-implemented, must be a separate explicitly audited integration (§29).
+Session binding (logind `session_scope`, §28/§99) is implemented: the
+broker matches the peer's cgroup session scope and refuses same-UID peers
+outside it. Seat-level binding (logind seat names) is the remaining
+hardening; the current design stops the per-session broker when the seat is
+released. Lock-screen OSK support, if ever implemented, must be a separate
+explicitly audited integration (§29); the normal desktop broker is destroyed
+when its session ends, so it cannot reach the lock screen by construction.
