@@ -195,6 +195,13 @@ const AARCH64: ArchAllowlist = ArchAllowlist {
 /// (AT_FDCWD, other dirfds, write/execute flags — i.e. `/dev/uinput`,
 /// `/dev/input/*`, block devices, control files) stays EPERM (§35, §60).
 /// The filter builder bakes the concrete values in at freeze time.
+///
+/// Authority boundary (do not overstate): seccomp constrains the syscall
+/// *arguments* `dirfd` and `flags`; it does not inspect the pathname string.
+/// The enforced authority is read-only `openat` relative to the pre-opened
+/// `/proc` directory under this highly constrained syscall shape — the
+/// `"<pid>/cgroup"` path contract is enforced by the session_scope code,
+/// not by the filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionGate {
     /// The pre-opened `/proc` directory fd (O_PATH|O_DIRECTORY|O_CLOEXEC).

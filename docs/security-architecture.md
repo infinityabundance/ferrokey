@@ -182,12 +182,16 @@ never supplies a UID. The active broker binds to the authorized desktop UID
 list from the root-owned config. **Session/seat binding** (§28, §99): the
 broker may additionally bind to a logind session scope
 (`session_scope: session-N.scope` in the root-owned config). A client is
-then authorized only if its cgroup contains the same session scope — the
-broker's post-freeze peer lookup uses a single narrowly-gated `openat` (see
-`crates/ferrokeyd/src/session_scope.rs` and `sandbox.rs SessionGate`), so a
-same-UID process outside the bound session is refused. The
-`session-lifetime` court proves the in-session client is served, the
-out-of-session client is refused, and the sandbox denials stay intact.
+then authorized only if its cgroup contains the same session scope. The
+broker's post-freeze peer lookup is a single read-only `openat` relative to
+the pre-opened `/proc` directory under a highly constrained syscall shape
+(seccomp pins `dirfd` + `O_RDONLY|O_CLOEXEC`; the `"<pid>/cgroup"` path
+contract is enforced by `session_scope.rs` code, not by the filter — the
+residual is read-only access to other world-readable `/proc` files, with no
+write path and no change to injection authority; see
+docs/threat-model.md). The `session-lifetime` court proves the in-session
+client is served, the out-of-session client is refused, and the sandbox
+denials stay intact.
 
 ## Lock-screen and session policy (§29, §99)
 

@@ -34,6 +34,20 @@ systemd ──▶ ferrokeyd start   (supervisor: parses root-owned config,
 development/testing override only; it is never enabled implicitly and never
 used by packaging.
 
+## Session binding and the shipped config (§28, §99)
+
+The production `ferrokeyd.yaml` ships with `session_scope` **unset** —
+authorization is UID/GID-based (the documented Phase-3 baseline). Session
+binding is implemented and court-proven (`session-lifetime`, `SEC.SESSION.BOUND`),
+but `session-N.scope` is assigned dynamically by the session manager at
+login, so a static config cannot ship a number. **Dynamic session
+discovery** — resolving the active graphical session scope at broker start
+(e.g. from the systemd user manager / `loginctl`) so `session_scope` can be
+deployed without administrator hard-coding — is an explicit packaging task
+for a future phase. Until then, deployments that enable session binding must
+supply the correct scope for their session manager, and must treat the
+config field as deployment-specific, not static.
+
 ## Why the unit looks the way it does
 
 ### `PrivateDevices=no` is deliberate (§39)

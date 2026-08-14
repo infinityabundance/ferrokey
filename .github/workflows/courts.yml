@@ -43,8 +43,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Full court suite (incl. SEC.* security courts)
+        # The release gate (a v* tag push — there is no `release` event in
+        # this workflow) runs the full-duration soak; PRs and main get the
+        # shortened soak so the matrix stays fast. Using the tag ref keeps
+        # the gate attached to the artifact that will actually be released.
         env:
-          SOAK_SECONDS: ${{ github.event_name == 'release' && 300 || 120 }}
+          SOAK_SECONDS: ${{ startsWith(github.ref, 'refs/tags/v') && 300 || 120 }}
         run: ./testing/scripts/run-all-courts.sh
 
       - name: Upload evidence

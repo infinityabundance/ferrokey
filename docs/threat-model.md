@@ -97,17 +97,23 @@ Nothing else. In particular, at runtime the broker **cannot**:
   not in the allowlist) — including `/dev/uinput`, `/dev/input/event*`,
   `/dev/mem`, `/dev/kmem`, `/dev/kvm`, block devices, procfs/sysfs control
   files (§35, §60). The one exception is the optional **session gate** (§28,
-  §99): when the config binds the broker to a logind session scope, a single
-  `openat` is allowed with `dirfd` equal to the pre-opened `/proc` fd AND
-  `flags == O_RDONLY|O_CLOEXEC` — the exact shape of the peer cgroup lookup
-  (`openat(proc_fd, "<pid>/cgroup", …)`). The seccomp filter bakes the
-  concrete dirfd/flags in at freeze time; write/open-any flags, `AT_FDCWD`
-  and every other dirfd stay EPERM, and the broker code validates the path
-  (a decimal pid, nothing else). The residual of this widening is that a
-  compromised broker could read *other* world-readable `/proc/<pid>/…`
-  files through the gate with `O_RDONLY`; it cannot open write paths
-  (`/dev/uinput` needs `O_WRONLY`, block devices `O_RDWR`), so injection
-  authority is unchanged.
+  §99): when the config binds the broker to a logind session scope, one
+  `openat` is allowed in exactly one constrained syscall shape — `dirfd`
+  equal to the pre-opened `/proc` fd AND `flags == O_RDONLY|O_CLOEXEC`.
+  Precisely: the filter grants **read-only `openat` relative to the
+  pre-opened `/proc` directory under a highly constrained syscall shape**.
+  The filter bakes the concrete dirfd/flags in at freeze time; write/
+  open-any flags, `AT_FDCWD` and every other dirfd stay EPERM. Be precise
+  about what this does and does not constrain: seccomp inspects the syscall
+  *arguments* `dirfd` and `flags`, not the *pathname* memory — so the gate
+  is not, by itself, a proof that the pathname is `"<pid>/cgroup"`. The
+  path contract (a validated decimal pid, nothing else) is enforced by the
+  broker code in `session_scope.rs`, which is code, not filter. The residual
+  authority is therefore exactly the one stated: a compromised broker could
+  `openat` other world-readable paths under `/proc` relative to the
+  pre-opened fd with `O_RDONLY` (e.g. `/proc/<pid>/environ`, `…/status`); it
+  cannot open write paths (`/dev/uinput` needs `O_WRONLY`, block devices
+  `O_RDWR`), so injection authority is unchanged.
 * issue any `ioctl` (§14, §61) — uinput configuration is impossible;
 * create any socket of any family (§31, §62) — AF_UNIX sockets were created
   before the freeze; AF_INET/AF_INET6/AF_PACKET probes return EPERM;

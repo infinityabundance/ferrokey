@@ -46,3 +46,18 @@ device_name: "Ferrokey Virtual Keyboard"
 # The supervisor must be privileged enough to setuid/setgid to these values.
 service_user: ferrokeyd
 service_group: ferrokeyd
+
+# ── Session binding (§28, §99) ──────────────────────────────────────────────
+# Optional. When set, the broker authorizes a client only if the client's
+# cgroup carries the SAME logind session scope (session-N.scope). Same-UID
+# processes outside the bound graphical session are then refused.
+#
+# It is intentionally left UNSET here (UID/GID-only authorization, the
+# Phase-3 baseline): session-N.scope is dynamic — the number is assigned by
+# the session manager at login — so a static production file cannot know it
+# ahead of time. Do not hard-code a session number in deployed configs.
+# Dynamic session discovery (resolving the active graphical session scope at
+# broker start, e.g. from the systemd user manager) is the packaging task
+# that must solve this before session_scope can ship on by default.
+#
+# session_scope: session-2.scope

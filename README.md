@@ -87,10 +87,11 @@ flaky, race-prone keyboard state. Ferrokey sidesteps the entire problem:
 | `ferrokey-uinput` | [crates.io](https://crates.io/crates/ferrokey-uinput) | `/dev/uinput` virtual keyboard + held-key ledger |
 | `ferrokey-layouts` | [crates.io](https://crates.io/crates/ferrokey-layouts) | layout data files and loaders |
 | `ferrokey-surface` | [crates.io](https://crates.io/crates/ferrokey-surface) | Wayland/X11 surfaces + Slint platform adapter |
-| `ferrokeyd` | — | the constrained broker: supervisor, bootstrap, runtime sandbox |
+| `ferrokey-terminal` | [crates.io](https://crates.io/crates/ferrokey-terminal) | embedded PTY terminal engine: bounded ANSI parser, grid, scrollback, key encoder, child-session lifecycle |
+| `ferrokeyd` | [crates.io](https://crates.io/crates/ferrokeyd) | the constrained broker: supervisor, bootstrap, runtime sandbox |
 
 The `ferrokey` crate is the main application: its `ferrokey` binary is the
-UI, and its library is the umbrella re-exporting the five crates. The
+UI, and its library is the umbrella re-exporting the six library crates. The
 daemon (`ferrokeyd`) lives under `crates/`.
 
 ## Building

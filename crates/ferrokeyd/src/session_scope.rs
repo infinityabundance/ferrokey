@@ -21,14 +21,16 @@
 //!
 //! The seccomp gate (see `sandbox::SessionGate`) enforces the dirfd and the
 //! flags at the syscall level; the code in this module additionally enforces
-//! the path contract (a validated decimal pid, nothing else), so a
-//! compromised broker cannot use the gate to open anything other than a
-//! `cgroup` file of a well-formed pid. The kernel enforces that `dirfd` is
-//! the only openable directory: opening the cgroup of pid N for read is the
-//! single post-freeze filesystem reach, and it leaks only the peer's own
-//! session scope back to the broker that is already authorized to speak to
-//! it. Opening with `O_WRONLY`/`O_RDWR` (e.g. `/dev/uinput`, block devices)
-//! stays impossible (§35).
+//! the path contract (a validated decimal pid, nothing else), so the only
+//! file the broker is *expected* to open is a `cgroup` file of a well-formed
+//! pid. Note the exact authority boundary: seccomp constrains the syscall
+//! *arguments* (`dirfd`, `flags`) — it does not inspect the pathname memory
+//! — so the enforced authority is read-only `openat` relative to the
+//! pre-opened `/proc` directory under a highly constrained syscall shape,
+//! and a compromised broker could use the gate to read other world-readable
+//! `/proc/<pid>/…` files with `O_RDONLY`. Opening with `O_WRONLY`/`O_RDWR`
+//! (e.g. `/dev/uinput`, block devices) stays impossible (§35), so injection
+//! authority is unchanged.
 
 use std::fs::File;
 use std::io::Read;
