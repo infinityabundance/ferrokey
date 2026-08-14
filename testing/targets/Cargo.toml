@@ -9,6 +9,7 @@ members = [
     "virtinput",
     "sdl",
     "layer-probe",
+    "mini-compositor",
 ]
 # Note: the Qt target is a C++/CMake app (testing/targets/qt) built in the
 # targets Docker image; it has no Cargo manifest.
@@ -22,6 +23,7 @@ license = "MIT OR Apache-2.0"
 ferrokey-core = { path = "../../crates/ferrokey-core" }
 x11rb = { version = "0.14.0", features = ["allow-unsafe-code"] }
 wayland-client = "0.31.15"
+wayland-server = "0.31.14"
 wayland-protocols = "0.32.13"
 slint = { version = "1.17.1", default-features = false, features = ["std", "compat-1-2"] }
 # v3_24 enables the GTK 3.24 API surface (Box::append, GdkEventKey::get_keyval,

@@ -190,6 +190,7 @@ rows = [
     ("surfaces", "X11 no-focus surface",                     ["x11"]),
     ("surfaces", "XWayland no-focus surface",                ["xwayland"]),
     ("surfaces", "wlroots / layer-shell (Wayland)",          ["wayland"]),
+    ("surfaces", "Backend selection policy (§65/§66)",         ["backend-selection"]),
     ("surfaces", "Focus preservation (applications)",        ["focus"]),
     ("surfaces", "GTK / Qt / Slint / X11 targets",           ["applications"]),
     ("targets",  "Firefox",                                  ["firefox"]),

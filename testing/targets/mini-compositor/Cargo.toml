@@ -1,0 +1,16 @@
+[package]
+name = "ferrokey-test-mini-compositor"
+description = "Court fixture: a minimal Wayland compositor WITHOUT zwlr_layer_shell_v1 (the Wayland-no-layer-shell detection fixture, §65/§66)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ferrokey-test-mini-compositor"
+path = "src/main.rs"
+
+[dependencies]
+wayland-server.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"

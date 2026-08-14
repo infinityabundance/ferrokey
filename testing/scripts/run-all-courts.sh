@@ -63,7 +63,7 @@ echo
  echo "── VM COURTS (X11 profile) ──"
  for court in kernel-security systemd soak socket-hijack cross-user device-lifetime uinput permissions x11 focus crash \
     repeat modifiers layouts applications dead-keys text-mode touch altgr \
-    full-desktop sdl terminal terminal-workspace session-lifetime; do
+    full-desktop sdl terminal terminal-workspace session-lifetime backend-selection; do
     echo
     echo "── VM court: $court ──"
     bash scripts/run-vm-court.sh "$court" x11

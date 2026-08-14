@@ -159,6 +159,22 @@ keyboards, load modules, mount filesystems, or invoke bpf/perf/ptrace. Its
 authority is bounded to existing FDs, especially the pre-created virtual
 keyboard.
 
+## Surface backend selection (§65/§66)
+
+The UI's surface backend is chosen by **capability detection**, never by
+compositor name: `WAYLAND_DISPLAY` + `zwlr_layer_shell_v1` →
+`wayland-layer-shell`; Wayland without layer-shell falls back to an X11
+surface on `DISPLAY` (`x11-no-input`, XWayland) or to an explicit degraded
+mode when no X display exists; a bare X11 session → `x11-no-input`;
+headless → `none`. The decision is a pure function of observed facts
+(`ferrokey-surface::detect::decide` over `SessionProbe`), every fallback
+carries its rejection reason in the reported detail, and the
+`backend-selection` court asserts the real app's startup log line across
+the five fixture sessions (headless, X11-only, sway layer-shell, the
+mini-compositor without layer-shell ± X11). Only `wayland-layer-shell` and
+`x11-no-input` preserve the focus invariant (§13); the degraded modes show
+explicit warnings.
+
 ## Session authorization (§27, §28, §114)
 
 Authorization identity comes from the kernel via `SO_PEERCRED`; the client

@@ -94,14 +94,16 @@ echo "==> building court targets (targets image)"
             -p ferrokey-test-common -p ferrokey-test-target-x11 \
             -p ferrokey-test-target-wayland -p ferrokey-test-target-slint \
             -p ferrokey-test-target-gtk -p ferrokey-test-target-sdl \
-            -p ferrokey-test-layer-probe -p ferrokey-test-virtinput
+            -p ferrokey-test-layer-probe -p ferrokey-test-virtinput \
+            -p ferrokey-test-mini-compositor
         cp /target/release/ferrokey-test-target-x11 \
            /target/release/ferrokey-test-target-wayland \
            /target/release/ferrokey-test-target-slint \
            /target/release/ferrokey-test-target-gtk \
            /target/release/ferrokey-test-target-sdl \
            /target/release/ferrokey-test-layer-probe \
-           /target/release/ferrokey-test-virtinput /out/
+           /target/release/ferrokey-test-virtinput \
+           /target/release/ferrokey-test-mini-compositor /out/
         # Qt target via CMake
         cmake -S /targets/qt -B /target/qt-build -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
         cmake --build /target/qt-build >/dev/null
