@@ -1,0 +1,13 @@
+{
+  "tool": "kani",
+  "tool_version": "0.67.0",
+  "commit": "7b53552a0a3f6fbe787aa48d8c11b23f7a653599",
+  "court": "KANI.MUTATION.001",
+  "result": "PASS",
+  "mutations": [
+    {"id": "MUT.ROLLOVER", "regression": "rollover guard removed", "expect": "KANI.ROLLOVER.001 FAIL"},
+    {"id": "MUT.DUPLICATE", "regression": "duplicate held insertion allowed", "expect": "KANI.HELD.001 FAIL"},
+    {"id": "MUT.LATCH", "regression": "latch consumption removed", "expect": "KANI.LATCH.001 FAIL"},
+    {"id": "MUT.RELEASEALL", "regression": "release_all omits one Up", "expect": "KANI.RELEASEALL.001 FAIL"}
+  ]
+}
