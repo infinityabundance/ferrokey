@@ -222,6 +222,7 @@ rows = [
     ("build",    "Workspace build + test + clippy + fmt",    ["build.workspace"]),
     ("build",    "Core unit tests",                          ["core.unit"]),
     ("build",    "Clean build from empty caches",            ["build.clean"]),
+    ("docs",     "Architecture documentation drift court",   ["architecture"]),
 ]
 
 def worst(results):

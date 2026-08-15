@@ -1,0 +1,76 @@
+flowchart TB
+    subgraph UI["ferrokey (root crate)"]
+        V["views.rs<br/>compact / full / terminal"]
+        P["pointer.rs<br/>OSK interaction"]
+        R["input.rs<br/>InputRouter (Destination)"]
+        D["daemon.rs<br/>DaemonLink (KeySink)"]
+        TI["term_input.rs<br/>terminal wiring"]
+    end
+
+    subgraph SEM["ferrokey-core"]
+        KS["state.rs KeyboardState<br/>depressed / latched / locked / layer"]
+        DR["action.rs KeyboardDriver"]
+        RP["repeat.rs RepeatEngine"]
+        C["compose.rs ComposeEngine"]
+        L["layout.rs Layout / KeySymbol"]
+    end
+
+    subgraph SURF["ferrokey-surface"]
+        DET["detect.rs decide(SessionProbe)"]
+        WL["wayland/ WaylandSurface"]
+        X11["x11/ X11Surface"]
+        F["fallback.rs NullSurface"]
+    end
+
+    subgraph TERM["ferrokey-terminal"]
+        ENC["key_encoder.rs TerminalKeyEncoder"]
+        TKS["sink.rs TerminalKeySink"]
+        PS["sink.rs PtySink"]
+        PTY["pty.rs PtyPair"]
+        CH["child.rs ChildHandle"]
+        PARS["parser.rs / grid / scrollback"]
+    end
+
+    subgraph PROTO["ferrokey-protocol"]
+        MSG["message.rs Message / Opcode"]
+        CL["client.rs Client"]
+    end
+
+    subgraph DAE["ferrokeyd"]
+        BOOT["bootstrap.rs"]
+        INIT["init.rs / device.rs<br/>/dev/uinput setup"]
+        SRV["serve.rs Runtime / authorize"]
+        SS["session_scope.rs SessionScopeGate"]
+        SB["sandbox.rs seccomp"]
+        RL["rate_limit.rs"]
+    end
+
+    subgraph UIN["ferrokey-uinput"]
+        DEV["device.rs"]
+        LEDGER["ledger.rs"]
+    end
+
+    P -->|KeyAction| DR
+    DR -->|KeyEvent| R
+    R -->|SYSTEM| D
+    R -->|TERMINAL| TKS
+    D -->|Message frames| MSG
+    MSG --> CL
+    CL -->|AF_UNIX| SRV
+    SRV --> SS
+    SRV --> SB
+    SRV --> RL
+    SRV -->|EV_KEY/EV_SYN| DEV
+    DEV --> LEDGER
+    DEV -->|kernel| K[Linux input core]
+    TKS --> ENC
+    ENC --> PS
+    PS --> PTY
+    PTY --> CH
+    PTY -->|bytes in| PARS
+    DET --> WL
+    DET --> X11
+    DET --> F
+    V -. layout .-> L
+    V -. symbols .-> L
+    L --> DR

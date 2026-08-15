@@ -1,0 +1,19 @@
+sequenceDiagram
+    participant UI as ferrokey (UI)
+    participant DR as KeyboardDriver
+    participant DL as DaemonLink
+    participant TERM as ferrokey-terminal
+    participant SRV as ferrokeyd serve
+    participant K as kernel (uinput)
+
+    UI->>UI: drop / shutdown request
+    UI->>TERM: term.shutdown() (child SIGHUP + grace)
+    TERM-->>UI: ChildExit summary
+    UI->>DR: release_all (no stuck keys)
+    DR->>DL: RELEASE_ALL frame
+    DL->>SRV: AF_UNIX
+    SRV->>SRV: release held keys (ledger)
+    SRV->>K: EV_KEY up for held keys
+    UI-->>SRV: disconnect (EOF)
+    SRV->>K: close device fd -> unregister (SEC.STATE.SIGKILL)
+    SRV->>SRV: phase terminating

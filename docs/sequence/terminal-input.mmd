@@ -1,0 +1,22 @@
+sequenceDiagram
+    participant P as pointer/touch (OSK, terminal mode)
+    participant DR as KeyboardDriver (ferrokey-core)
+    participant ST as KeyboardState
+    participant RT as InputRouter (input.rs)
+    participant TKS as TerminalKeySink (ferrokey-terminal)
+    participant ENC as TerminalKeyEncoder
+    participant PS as PtySink
+    participant PTY as PTY master
+    participant CH as child (shell / vim / htop / tmux)
+
+    P->>DR: KeyAction::Down / Tap / Up
+    DR->>ST: press(key, now)
+    ST-->>DR: Vec<KeyEvent>
+    DR->>RT: key_down / key_up
+    RT->>TKS: (Destination::Terminal)
+    TKS->>ENC: PhysicalKey + layout + modes
+    ENC-->>PS: exact PTY bytes (bounded)
+    PS->>PTY: write
+    PTY->>CH: bytes to child stdin
+    CH-->>PTY: output bytes
+    PTY-->>PARSER: grid / scrollback update

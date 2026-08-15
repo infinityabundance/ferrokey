@@ -1,0 +1,22 @@
+sequenceDiagram
+    participant P as pointer/touch (OSK)
+    participant DR as KeyboardDriver (ferrokey-core)
+    participant ST as KeyboardState
+    participant RT as InputRouter (input.rs)
+    participant DL as DaemonLink (daemon.rs)
+    participant CL as protocol Client
+    participant SRV as ferrokeyd serve
+    participant DEV as uinput device
+    participant APP as focused application
+
+    P->>DR: KeyAction::Down / Tap / Up
+    DR->>ST: press(key, now)
+    ST-->>DR: Vec<KeyEvent> (Down/Up, injected modifiers)
+    DR->>RT: key_down / key_up
+    RT->>DL: (Destination::System)
+    DL->>CL: KEY_DOWN / KEY_UP frames
+    CL->>SRV: AF_UNIX
+    SRV->>SRV: authorize (SO_PEERCRED + session scope)
+    SRV->>SRV: rate-limit + held-key ledger
+    SRV->>DEV: EV_KEY / EV_SYN
+    DEV->>APP: Linux input core -> focused window

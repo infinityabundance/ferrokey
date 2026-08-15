@@ -1,0 +1,27 @@
+stateDiagram-v2
+    [*] --> Up
+    Up --> Down: press(key)
+    Down --> Up: release(key)
+    Down --> Down: press(other key) [chord / rollover, held_count < max]
+    Down --> Down: press(same key) [no-op: already held]
+
+    state modifier_hold {
+        [*] --> HeldMod
+        HeldMod --> Up: release (chord or long) [no latch]
+        HeldMod --> Latched: release (tap, latch_enabled)
+        Latched --> Consumed: next qualifying key press [latched cleared]
+        Consumed --> [*]
+        Latched --> Locked: release double-tap (lock_enabled)
+        HeldMod --> Locked: double-tap release
+        Locked --> Unlocked: double-tap release [toggle]
+        Locked --> [*]
+    }
+
+    Down --> HeldMod: modifier press
+    Down --> Locked: lock key (CapsLock/NumLock) tap-release toggles
+    Down --> Repeat: held repeatable key (RepeatEngine tick)
+    Repeat --> Up: release(key)
+
+    Down --> [*]: release_all (non-modifiers first, modifiers last)
+    Latched --> [*]: release_all clears latched
+    Locked --> [*]: release_all leaves locks (logical state)

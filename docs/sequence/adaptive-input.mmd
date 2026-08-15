@@ -1,0 +1,19 @@
+sequenceDiagram
+    participant P as touch event
+    participant STATS as KeyTouchStats (bounded online stats)
+    participant GEOM as HitGeometry (ellipse model)
+    participant KEY as key resolution (views.rs key_at)
+    participant OPT as optimizer (low-priority pass)
+    participant UI as UI preview
+
+    P->>STATS: constant/bounded-time update (Welford)
+    P->>KEY: resolve intended key (current HitGeometry)
+    KEY-->>P: key action (normal handling)
+
+    Note over OPT: after sufficient samples / scheduled pass
+    OPT->>OPT: candidate layouts minimize expected input cost
+    OPT->>OPT: enforce constraints (displacement, overlap, boundary)
+    OPT-->>GEOM: effective geometry update (hysteresis-bounded)
+    OPT-->>UI: explainability diagnostics (sample count, bias, constraint)
+
+    Note over GEOM: freeze -> no pass mutates geometry until unfrozen
