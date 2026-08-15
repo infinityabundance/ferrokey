@@ -1,7 +1,7 @@
 [package]
 name = "ferrokey-core"
 description = "Ferrokey keyboard state machine: modifiers, sticky/locked keys, repeat, layouts, actions"
-version.workspace = true
+version = "0.1.3"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
