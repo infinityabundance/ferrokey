@@ -115,7 +115,7 @@ echo
  require_headroom "vm courts (x11 profile)" 8
  for court in kernel-security systemd soak socket-hijack cross-user device-lifetime uinput permissions x11 focus crash \
     repeat modifiers layouts applications dead-keys text-mode touch altgr \
-    full-desktop sdl terminal terminal-workspace session-lifetime backend-selection; do
+    full-desktop sdl terminal terminal-workspace session-lifetime; do
     echo
     echo "── VM court: $court ──"
     bash scripts/run-vm-court.sh "$court" x11
@@ -159,7 +159,10 @@ echo
  echo
  echo "── VM COURTS (Wayland profile) ──"
  require_headroom "vm courts (wayland profile)" 6
- for court in wayland xwayland; do
+ # backend-selection needs sway (the wayland-profile compositor): its fixture
+ # matrix covers headless / X11-only / wayland+layer-shell / xwayland-fallback
+ # / wayland-degraded in ONE VM, so it must boot the wayland profile.
+ for court in wayland xwayland backend-selection; do
     echo
     echo "── VM court: $court ──"
     bash scripts/run-vm-court.sh "$court" wayland
