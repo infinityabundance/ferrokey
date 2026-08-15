@@ -1,7 +1,7 @@
 {
   "tool": "kani",
   "tool_version": "0.67.0",
-  "commit": "7b53552a0a3f6fbe787aa48d8c11b23f7a653599",
+  "commit": "38d69208777bd151c3badf67caadfd1a043ad5fb",
   "court": "KANI.MUTATION.001",
   "result": "PASS",
   "mutations": [
