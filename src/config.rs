@@ -71,8 +71,44 @@ pub struct UiConfig {
     pub text_mode: bool,
     /// Embedded terminal workspace mode (Phase 3 addendum #2).
     pub terminal: TerminalUiConfig,
+    /// Adaptive key geometry (Phase 4 WS4): the OSK learns touch placement
+    /// and adapts the effective hit targets while the visible keyboard stays
+    /// stable.
+    pub adaptive: AdaptiveUiConfig,
     /// Initial input destination ("system" or "terminal").
     pub destination: String,
+}
+
+/// Adaptive key geometry configuration (WS4 §4.9 user controls).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AdaptiveUiConfig {
+    /// Master switch: Adaptive Geometry On/Off. When off, touch hit-testing
+    /// uses the plain visual rects and no samples are recorded.
+    pub enabled: bool,
+    /// Freeze the current effective geometry: no learning pass may mutate it
+    /// until unfrozen (learning may still accumulate statistics).
+    pub frozen: bool,
+    /// Minimum samples per key before its hit target may adapt.
+    pub min_samples: u32,
+    /// Run an optimization pass after this many new samples (the optimizer
+    /// never runs on the touch hot path).
+    pub optimize_every: u32,
+    /// The maximum normalized-distance confidence (0 = dead center) below
+    /// which a touch counts as an unambiguous intended-key sample.
+    pub evidence_confidence: f64,
+}
+
+impl Default for AdaptiveUiConfig {
+    fn default() -> Self {
+        AdaptiveUiConfig {
+            enabled: true,
+            frozen: false,
+            min_samples: 8,
+            optimize_every: 16,
+            evidence_confidence: 0.5,
+        }
+    }
 }
 
 /// The embedded terminal workspace configuration.
@@ -121,6 +157,7 @@ impl Default for UiConfig {
             force_degraded_banner: false,
             text_mode: false,
             terminal: TerminalUiConfig::default(),
+            adaptive: AdaptiveUiConfig::default(),
             destination: "system".into(),
         }
     }

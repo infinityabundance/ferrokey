@@ -77,6 +77,10 @@ SYS_MISSING=()
 for s in "${SYS_SYMBOLS[@]}"; do
     grep -rq "$s" "$SRC" "$CRATES/ferrokey-core/src" "$CRATES/ferrokey-protocol/src" 2>/dev/null || SYS_MISSING+=("$s")
 done
+# The WS4 adaptive-geometry layer the doc describes must exist.
+for s in AdaptiveGeometry KeyTouchStats GeometryConstraints KeyDiagnostics; do
+    grep -rq "$s" "$CRATES/ferrokey-core/src/geometry.rs" 2>/dev/null || SYS_MISSING+=("$s")
+done
 for f in "$CRATES/ferrokeyd/src/serve.rs" "$CRATES/ferrokeyd/src/rate_limit.rs" "$CRATES/ferrokey-uinput/src/ledger.rs"; do
     [ -f "$f" ] || SYS_MISSING+=("$(basename "$f")")
 done

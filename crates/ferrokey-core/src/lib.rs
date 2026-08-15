@@ -13,6 +13,7 @@
 
 pub mod action;
 pub mod compose;
+pub mod geometry;
 pub mod key;
 pub mod keyset;
 pub mod layout;

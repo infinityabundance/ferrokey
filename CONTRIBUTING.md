@@ -199,12 +199,30 @@ failed proof is a CI failure (no warning-only proof suite).
 
 ### Adding an adaptive-geometry invariant
 
-Adaptive geometry lives in `crates/ferrokey-core` (the pure optimizer
-module) — see Workstream 4. Every constraint (max displacement, max
-overlap, min accessible area, boundary) is an invariant with a unit test +
-an `ADAPT.*` court row. Deterministic replay: same dataset + same baseline
-+ same optimizer version ⇒ same output; add a regression fixture in
-`testing/fixtures/adaptive/`.
+Adaptive geometry lives in `crates/ferrokey-core/src/geometry.rs` (pure,
+deterministic, dependency-free) and is consumed by the touch path in
+`src/pointer.rs` (hit-test + intended-key evidence) via the `adaptive`
+config block. Every constraint (max center displacement, max expansion,
+min accessible area, neighbor overlap) is an invariant enforced by
+`GeometryConstraints::violated_by` and re-checked by the `ADAPT.BOUNDS.001`
+court. Adding or changing behaviour:
+
+1. Change the model in `geometry.rs`; keep it pure and deterministic (the
+   fixed-seed `SeededRng` is the only randomness, and only for synthetic
+   populations — the pipeline itself has none).
+2. Add unit tests in `geometry.rs` (Welford correctness, constraint
+   enforcement, freeze/reset exactness, determinism).
+3. Add or extend the `ADAPT.*` gate in `crates/ferrokey-core/tests/adapt_courts.rs`
+   and re-run the court (inside the builder container, never on the host):
+
+```sh
+bash testing/scripts/adaptive-court.sh
+```
+
+Deterministic replay: same dataset + same baseline + same optimizer version
+⇒ identical output (`ADAPT.REPLAY.001`). New synthetic populations go in
+`PopulationKind` (all ten are exercised by `ADAPT.BOUNDS.001` and the
+`ADAPT.METRIC.001` report).
 
 ### Adding a shell-aware row
 

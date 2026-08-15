@@ -24,7 +24,7 @@ and the window integration (surfaces) is replaceable.
 | crate | responsibility | security relevance | primary courts/tests |
 |---|---|---|---|
 | `ferrokey` (root) | the UI binary + umbrella re-exports | UI is fully unprivileged; speaks only the bounded protocol | x11, wayland, xwayland, applications, chromium, firefox, electron, sdl, focus, touch, terminal |
-| `ferrokey-core` | pure keyboard semantics: state machine, modifiers, repeat, layouts, compose | the semantic layer that decides what keys reach the system; rollover bound, latch/lock, `release_all` | modifiers, repeat, layouts, dead-keys, altgr, crash, text-mode, unit tests |
+| `ferrokey-core` | pure keyboard semantics: state machine, modifiers, repeat, layouts, compose, **adaptive key geometry** (WS4: bounded touch statistics, constrained hit-region optimizer, deterministic replay) | the semantic layer that decides what keys reach the system; rollover bound, latch/lock, `release_all` | modifiers, repeat, layouts, dead-keys, altgr, crash, text-mode, adaptive-geometry (ADAPT.*), unit tests |
 | `ferrokey-layouts` | layout data + loaders (builtin YAML, real xkbcommon) | layout parsing must be bounded (malformed data must not panic/over-allocate) | layouts, dead-keys, altgr, unit tests |
 | `ferrokey-protocol` | binary wire protocol UI ↔ broker (length-prefixed frames) | the privilege boundary surface; hostile input resistant | socket-hijack, cross-user, protocol fuzz (`fuzz_decoder`) |
 | `ferrokey-surface` | window-system integration + custom Slint platform | focus-preservation invariant; capability-driven backend selection | wayland, xwayland, x11, backend-selection |
@@ -245,6 +245,18 @@ Semantic layers in the current implementation:
   repeats only for held repeatable keys.
 - Held-key state — `KeyboardState::depressed` (rollover-capped set) plus
   the broker-side ledger (`ferrokey-uinput::ledger`).
+- Touch intent — **adaptive key geometry** (`ferrokey-core::geometry`, WS4):
+  the OSK hit-tests touches against adaptive **hit ellipses** while the
+  visible keyboard stays stable. `VisualGeometry` (the drawn rects) is
+  separate from `HitGeometry` (the effective touch targets). Per-key
+  bounded Welford statistics feed a constrained optimizer (minimize
+  expected input cost subject to hard invariants: max center displacement,
+  max expansion, min accessible area, neighbor overlap); neighbor
+  boundaries are resolved by a deterministic normalized-distance
+  competition rule. The optimizer runs off the touch hot path; freeze/
+  reset/explain are exposed as controller API + `adaptive` config.
+  Evidence rule: only unambiguous hits (confidence below
+  `adaptive.evidence_confidence`) are recorded as training samples.
 
 ### 3.2 Terminal-input path (direct, broker-free)
 
@@ -350,6 +362,10 @@ unregisters the uinput device when the fd closes (proven by
 | Release of an unheld key cannot create state | `KeyboardState::release` early-returns on absent keys | repeat; unit tests | proved: `KANI.RELEASE.001` (WS3 receipt) |
 | Interleaved press/release/`release_all` sequences preserve the invariant set | `KeyboardState` ops over the fixed-capacity tables | soak (chords); unit tests | proved: `KANI.SEQUENCE.001` (WS3 receipt) |
 | The proofs detect the regressions they claim to guard | `proofs/run-negative-controls.sh` (mutated copies) | — | proved: `KANI.MUTATION.001` (WS3 receipt) |
+| Adaptive geometry never violates the hard invariants | `GeometryConstraints::violated_by` + `AdaptiveGeometry::clamp_to_constraints` | adaptive-geometry (ADAPT.BOUNDS.001) | proved: `ADAPT.BOUNDS.001` (WS4 court) |
+| Adaptation is deterministic (same baseline + dataset + version ⇒ same output) | pure f64 pipeline, fixed-seed populations | adaptive-geometry (ADAPT.REPLAY.001, ADAPT.NEIGHBOR.001) | proved: `ADAPT.REPLAY.001` (WS4 court) |
+| Freeze/reset are exact user controls | `AdaptiveGeometry::set_frozen` / `reset` | adaptive-geometry (ADAPT.FREEZE.001, ADAPT.RESET.001) | proved: `ADAPT.FREEZE.001`, `ADAPT.RESET.001` (WS4 court) |
+| Adaptive hit regions measurably reduce miss rate where improvement is possible | `AdaptiveGeometry::evaluate` over 10 synthetic populations | adaptive-geometry (ADAPT.METRIC.001) | proved: `ADAPT.METRIC.001` (WS4 court, metric report) |
 | Broker post-freeze cannot open devices/network/ioctl | `sandbox.rs` filter + probes | kernel-security (SEC.SECCOMP.*, SEC.NET.*), mutation | — |
 | Session binding refuses out-of-scope peers | `serve.rs authorize` + `session_scope.rs` | session-lifetime | — |
 | Backend selected by capability, not name | `ferrokey-surface::detect::decide` (pure) | backend-selection | — |

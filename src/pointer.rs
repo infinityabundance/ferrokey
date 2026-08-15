@@ -13,6 +13,7 @@
 
 use crate::views::{self, KeyboardView};
 use crate::MainWindow;
+use ferrokey_core::geometry::{AdaptiveGeometry, Point};
 use ferrokey_surface::{PointerButton, SurfaceEvent};
 use std::collections::BTreeMap;
 
@@ -21,9 +22,22 @@ use std::collections::BTreeMap;
 /// Tracks which key each pointer button (and the active touch) is currently
 /// holding, so a release always targets the key that was pressed — matching
 /// physical-keyboard semantics even if the pointer drifts between keys.
+///
+/// Touch presses are hit-tested through the **adaptive geometry** (WS4)
+/// when enabled: the OSK learns where the user actually touches and adapts
+/// the effective hit targets while the visible keyboard stays stable.
+/// Pointer presses keep the plain visual hit-test (mouse input is precise).
 pub struct PointerBridge {
     view: &'static KeyboardView,
     scale: f32,
+    /// Adaptive touch hit-testing + learning; `None` = disabled.
+    adaptive: Option<AdaptiveGeometry>,
+    /// key index → name, in view order (the adaptive geometry's index
+    /// space, matching [`views::adaptive_geometry_basis`]).
+    names: Vec<&'static str>,
+    /// Normalized-distance confidence below which a touch is an unambiguous
+    /// intended-key sample (evidence rule §4.3).
+    evidence_confidence: f64,
     /// Pointer button → key name currently held by that button.
     pointer_down: BTreeMap<PointerButton, &'static str>,
     /// The key currently held by the active touch, if any.
@@ -31,10 +45,26 @@ pub struct PointerBridge {
 }
 
 impl PointerBridge {
-    pub fn new(view: &'static KeyboardView, scale: f32) -> Self {
+    pub fn new(
+        view: &'static KeyboardView,
+        scale: f32,
+        adaptive: Option<(AdaptiveGeometry, f64)>,
+    ) -> Self {
+        let mut names = Vec::new();
+        let evidence_confidence = match &adaptive {
+            Some((_, conf)) => {
+                names = views::adaptive_geometry_basis(view).2;
+                *conf
+            }
+            None => f64::INFINITY,
+        };
+        let adaptive = adaptive.map(|(ag, _)| ag);
         PointerBridge {
             view,
             scale,
+            adaptive,
+            names,
+            evidence_confidence,
             pointer_down: BTreeMap::new(),
             touch_down: None,
         }
@@ -43,6 +73,17 @@ impl PointerBridge {
     /// Keep the bridge's scale in sync with the surface (HiDPI).
     pub fn set_scale(&mut self, scale: f32) {
         self.scale = scale;
+    }
+
+    /// Advance the adaptive geometry: run an optimization pass when enough
+    /// new evidence has accumulated. Called from the UI timer — never from a
+    /// touch event (the optimizer is not on the touch hot path, §4.7).
+    pub fn tick_adaptive(&mut self) {
+        if let Some(ag) = &mut self.adaptive {
+            if ag.optimize_due() {
+                ag.optimize();
+            }
+        }
     }
 
     /// Translate one raw surface event into key actions on `ui`.
@@ -78,7 +119,7 @@ impl PointerBridge {
             }
             SurfaceEvent::TouchPressed { x, y } => {
                 if self.touch_down.is_none() {
-                    if let Some(name) = self.key_at(x, y) {
+                    if let Some(name) = self.touch_key_at(x, y) {
                         if let Some(chord) = self.view.chord_for(name) {
                             self.play_chord(ui, chord);
                         } else {
@@ -112,6 +153,41 @@ impl PointerBridge {
         )
     }
 
+    /// The touch point in logical (view) coordinates.
+    fn logical_point(&self, x: f64, y: f64) -> Point {
+        let scale = if self.scale > 0.0 { self.scale } else { 1.0 };
+        Point::new(x / f64::from(scale), y / f64::from(scale))
+    }
+
+    /// The key under a touch, via the adaptive geometry when enabled (with
+    /// intended-key evidence recording, §4.3); falls back to the visual
+    /// rects when disabled.
+    fn touch_key_at(&mut self, x: f64, y: f64) -> Option<&'static str> {
+        let p = self.logical_point(x, y);
+        if let Some(ag) = &mut self.adaptive {
+            let (hit, confidence) = ag.hit_test_confidence(p);
+            match hit {
+                Some(idx) => {
+                    // Evidence rule: only unambiguous hits (well inside the
+                    // effective region) are training samples — a boundary
+                    // touch is ambiguous and must not pollute the model.
+                    if confidence <= self.evidence_confidence {
+                        ag.record_hit(idx, p);
+                    }
+                    Some(self.names[idx])
+                }
+                None => None,
+            }
+        } else {
+            let scale = if self.scale > 0.0 { self.scale } else { 1.0 };
+            views::key_at(
+                self.view,
+                (x / f64::from(scale)) as f32,
+                (y / f64::from(scale)) as f32,
+            )
+        }
+    }
+
     /// Play a chord key: press each member in order, release in reverse
     /// (§55, §57). The sequence flows through the normal core state machine
     /// and the active destination — never an internal command.
@@ -135,7 +211,7 @@ mod tests {
     /// bridge's state transitions are asserted through an observer view).
     fn assert_release_targets_pressed_key() {
         let view = views::view("compact").expect("compact view");
-        let mut bridge = PointerBridge::new(view, 1.0);
+        let mut bridge = PointerBridge::new(view, 1.0, None);
 
         // Pointer press + release of the same button must pair up even when
         // the pointer has drifted to a different key by release time.
@@ -222,14 +298,14 @@ mod tests {
         let (r, c) = find_key(view, "h");
         let (x, y) = views::key_center(view, r, c);
 
-        let scale2 = PointerBridge::new(view, 2.0);
+        let scale2 = PointerBridge::new(view, 2.0, None);
         // Physical coords are 2x the logical geometry; the bridge divides.
         assert_eq!(
             scale2.key_at(f64::from(x) * 2.0, f64::from(y) * 2.0),
             Some("h")
         );
 
-        let scale1 = PointerBridge::new(view, 1.0);
+        let scale1 = PointerBridge::new(view, 1.0, None);
         assert_eq!(scale1.key_at(f64::from(x), f64::from(y)), Some("h"));
     }
 }

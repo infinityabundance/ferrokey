@@ -135,6 +135,34 @@ Type: string. Default: "system". Initial input destination:
 (keys go to the broker) or
 .BR terminal
 (keys go to the PTY). The UI can switch destinations at runtime.
+.TP
+.B adaptive
+Type: map. Adaptive key geometry: the OSK learns touch placement and adapts
+the effective hit targets while the visible keyboard stays stable. Only
+affects touch input; pointer presses keep the exact visual hit-test.
+.RS
+.TP
+.B adaptive.enabled
+bool, default true: master switch. When off, touch hit-testing uses the
+plain visual rects and no samples are recorded.
+.TP
+.B adaptive.frozen
+bool, default false: freeze the current effective geometry. No learning pass
+may mutate it until unfrozen (statistics may still accumulate).
+.TP
+.B adaptive.min_samples
+integer, default 8: minimum samples per key before its hit target may
+adapt.
+.TP
+.B adaptive.optimize_every
+integer, default 16: run an optimization pass after this many new samples
+(the optimizer never runs on the touch hot path).
+.TP
+.B adaptive.evidence_confidence
+float, default 0.5: maximum normalized-distance confidence below which a
+touch counts as an unambiguous intended-key training sample; boundary
+touches (ambiguous) never pollute the model.
+.RE
 .SH EXAMPLE
 .nf
     layout: us

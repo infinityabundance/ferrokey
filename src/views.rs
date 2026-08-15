@@ -182,6 +182,71 @@ pub fn view(id: &str) -> Option<&'static KeyboardView> {
     VIEWS.iter().find(|v| v.id == id)
 }
 
+/// The adaptive-geometry basis over a view: the visual rect of every key in
+/// view order, the neighbor graph, and the key-name lookup (`index → name`).
+///
+/// The rects mirror [`key_center`] / [`key_at`] exactly (same row/width
+/// math), so the initial adaptive hit regions are identical to the visual
+/// rects and the OSK behaves byte-for-byte the same until it has learned.
+/// Neighbors: left/right in a row plus any key in an adjacent row whose
+/// horizontal interval overlaps (the competition graph, WS4 §4.13).
+pub fn adaptive_geometry_basis(
+    view: &'static KeyboardView,
+) -> (
+    Vec<ferrokey_core::geometry::Rect>,
+    Vec<Vec<usize>>,
+    Vec<&'static str>,
+) {
+    use ferrokey_core::geometry::Rect;
+
+    let mut rects = Vec::new();
+    let mut names = Vec::new();
+    let mut row_of = Vec::new();
+    for (r, row) in view.rows.iter().enumerate() {
+        let mut x = VIEW_PAD;
+        for key in row.keys {
+            let w = key_width(view, key.width);
+            let y = VIEW_PAD + r as f32 * (VIEW_KEY_HEIGHT + VIEW_SPACING);
+            rects.push(Rect::new(
+                f64::from(x),
+                f64::from(y),
+                f64::from(w),
+                f64::from(VIEW_KEY_HEIGHT),
+            ));
+            names.push(key.name);
+            row_of.push(r);
+            x += w + VIEW_SPACING;
+        }
+    }
+
+    let n = rects.len();
+    let mut neighbors = vec![Vec::new(); n];
+    for i in 0..n {
+        // horizontal neighbours: previous / next index in the same row
+        if i > 0 && row_of[i - 1] == row_of[i] {
+            neighbors[i].push(i - 1);
+        }
+        if i + 1 < n && row_of[i + 1] == row_of[i] {
+            neighbors[i].push(i + 1);
+        }
+        // vertical neighbours: any key in an adjacent row whose horizontal
+        // interval overlaps this key's interval
+        let (x0, x1) = (rects[i].x, rects[i].x + rects[i].w);
+        for j in 0..n {
+            if i == j || row_of[i].abs_diff(row_of[j]) != 1 {
+                continue;
+            }
+            let (jx0, jx1) = (rects[j].x, rects[j].x + rects[j].w);
+            if x0 < jx1 && jx0 < x1 {
+                neighbors[i].push(j);
+            }
+        }
+        neighbors[i].sort_unstable();
+        neighbors[i].dedup();
+    }
+    (rects, neighbors, names)
+}
+
 /// All view ids, in deterministic order.
 pub const VIEW_IDS: &[&str] = &["compact", "full", "terminal"];
 

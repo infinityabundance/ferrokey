@@ -510,7 +510,29 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
         drop(t);
     }
 
-    let mut bridge = pointer::PointerBridge::new(view, platform.scale());
+    let adaptive = if config.adaptive.enabled {
+        // Adaptive key geometry (WS4): the OSK learns touch placement and
+        // adapts the effective hit targets. Built from the view's visual
+        // geometry; the initial hit regions equal the visual rects, so the
+        // OSK behaves identically until it has learned.
+        let (rects, neighbors, _names) = views::adaptive_geometry_basis(view);
+        let ag = ferrokey_core::geometry::AdaptiveGeometry::new(
+            ferrokey_core::geometry::AdaptiveConfig {
+                enabled: true,
+                frozen: config.adaptive.frozen,
+                min_samples: config.adaptive.min_samples,
+                optimize_every: config.adaptive.optimize_every,
+                ..Default::default()
+            },
+            ferrokey_core::geometry::GeometryConstraints::default(),
+            &rects,
+            &neighbors,
+        );
+        Some((ag, config.adaptive.evidence_confidence))
+    } else {
+        None
+    };
+    let mut bridge = pointer::PointerBridge::new(view, platform.scale(), adaptive);
     let mut terminal_input = term_input::TerminalInput::default();
     let keyboard_h_phys = keyboard_h;
 
@@ -592,6 +614,10 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
         if let Err(e) = driver.borrow_mut().tick_repeat(now_moment()) {
             log::warn!("repeat tick failed: {e}");
         }
+
+        // 4a. Adaptive geometry: the optimizer runs off the touch hot path,
+        // once per UI frame when enough new evidence has accumulated (WS4).
+        bridge.tick_adaptive();
 
         // 4b. Repeat engine diagnostics (throttled).
         if Instant::now().duration_since(last_status_update) > Duration::from_millis(500) {
