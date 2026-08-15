@@ -169,7 +169,7 @@ mod tests {
     fn probe(wayland_env: bool, layer_shell: Option<bool>, display: Option<&str>) -> SessionProbe {
         SessionProbe {
             wayland_env,
-            wayland_globals: layer_shell.map(|ls| Ok(ls)),
+            wayland_globals: layer_shell.map(Ok),
             x11_display: display.map(str::to_string),
         }
     }

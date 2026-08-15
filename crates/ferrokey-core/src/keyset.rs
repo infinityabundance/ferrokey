@@ -182,7 +182,7 @@ impl KeySet {
         let mut dup = false;
         let mut i = 0;
         while i + 1 < MAX_HELD_KEYS {
-            if self.keys[i] != None && self.keys[i] == self.keys[i + 1] {
+            if self.keys[i].is_some() && self.keys[i] == self.keys[i + 1] {
                 dup = true;
             }
             i += 1;
@@ -199,7 +199,7 @@ pub struct KeyIter<'a> {
     back: usize,
 }
 
-impl<'a> Iterator for KeyIter<'a> {
+impl Iterator for KeyIter<'_> {
     type Item = PhysicalKey;
 
     fn next(&mut self) -> Option<PhysicalKey> {
@@ -226,7 +226,7 @@ impl<'a> Iterator for KeyIter<'a> {
     }
 }
 
-impl<'a> DoubleEndedIterator for KeyIter<'a> {
+impl DoubleEndedIterator for KeyIter<'_> {
     fn next_back(&mut self) -> Option<PhysicalKey> {
         // Symmetric: `back` decrements from at most `len <= MAX_HELD_KEYS`
         // down to 0, so the trip bound is exactly the fixed capacity.
@@ -247,6 +247,15 @@ impl<'a> DoubleEndedIterator for KeyIter<'a> {
 impl Default for KeySet {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<'a> IntoIterator for &'a KeySet {
+    type Item = PhysicalKey;
+    type IntoIter = KeyIter<'a>;
+
+    fn into_iter(self) -> KeyIter<'a> {
+        self.iter()
     }
 }
 
@@ -310,7 +319,7 @@ mod tests {
         // itself must not silently exceed its capacity.
         let mut s = KeySet::new();
         for code in 0..(MAX_HELD_KEYS as u32 + 8) {
-            let _ = s.insert(PhysicalKey::from_linux_code(code).unwrap_or(PhysicalKey::Escape));
+            s.insert(PhysicalKey::from_linux_code(code).unwrap_or(PhysicalKey::Escape));
         }
         assert!(s.len() <= MAX_HELD_KEYS);
     }

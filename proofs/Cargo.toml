@@ -18,3 +18,8 @@ ferrokey-core = { path = "../crates/ferrokey-core" }
 # are expected to FAIL: run them via proofs/run-negative-controls.sh against
 # the mutated copies, never in the passing suite.
 mutation-checks = []
+
+[lints.rust]
+# The harnesses are compiled by `cargo kani` with --cfg kani; declare the
+# cfg so the unexpected-cfgs lint does not fire on a normal build.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

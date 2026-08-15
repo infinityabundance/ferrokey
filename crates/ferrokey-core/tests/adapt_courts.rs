@@ -49,8 +49,8 @@ fn compact_geometry() -> (Vec<Rect>, Vec<Vec<usize>>) {
     let mut row_of = Vec::new();
     for (r, row) in rows.iter().enumerate() {
         let mut x = PAD;
-        for &f in row.iter() {
-            let w = f as f64 * KEY_BASE;
+        for &f in *row {
+            let w = f64::from(f) * KEY_BASE;
             let y = PAD + r as f64 * (KEY_H + SPACING);
             visual.push(Rect::new(x, y, w, KEY_H));
             row_of.push(r);
@@ -210,7 +210,7 @@ fn adapt_courts() {
                 keys_used += 1;
             }
         }
-        let mean_dx = total_dx / keys_used.max(1) as f64;
+        let mean_dx = total_dx / f64::from(keys_used.max(1));
         let improve = if eval.baseline_error_rate > 0.02 {
             eval.adaptive_error_rate < eval.baseline_error_rate
         } else {
@@ -276,14 +276,14 @@ fn adapt_courts() {
             }
             // A strict per-key re-check against the model's own neighbor
             // graph (the definitive one).
-            for i in 0..ag.len() {
-                let nbs: Vec<Ellipse> = neighbors[i].iter().map(|&j| ag.hit(j)).collect();
+            for (i, nb) in neighbors.iter().enumerate() {
+                let nbs: Vec<Ellipse> = nb.iter().map(|&j| ag.hit(j)).collect();
                 if let Some(viol) = ag.constraints.violated_by(ag.visual(i), ag.hit(i), &nbs) {
                     bad += 1;
                     worst = format!("{}:{:?}", kind.name(), viol);
                 }
             }
-            assert_eq!(eval.constraints_violated, 0, "{}", worst);
+            assert_eq!(eval.constraints_violated, 0, "{worst}");
         }
         gate(
             "BOUNDS.001",
@@ -334,7 +334,7 @@ fn adapt_courts() {
         let dataset = synthetic_dataset(PopulationKind::LeftBias, &visual, 40, 9);
         let mut ag = fresh(&visual, &neighbors);
         ag.feed(&dataset);
-        assert_ne!(max_center_displacement(&ag), 0.0);
+        assert!(max_center_displacement(&ag) > 1e-9);
         ag.reset();
         let mut exact = true;
         for i in 0..ag.len() {

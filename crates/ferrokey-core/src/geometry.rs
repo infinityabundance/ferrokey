@@ -577,7 +577,7 @@ impl AdaptiveGeometry {
             let d = g.hit.distance(p);
             if d <= 1.0 {
                 let cand = (d, u32::MAX - g.frequency, i);
-                if best.map_or(true, |b| cand < b) {
+                if best.is_none_or(|b| cand < b) {
                     best = Some(cand);
                 }
             }
@@ -606,10 +606,9 @@ impl AdaptiveGeometry {
         let mut proposals = self.evaluate_and_propose();
         // Hard-constraint enforcement on the proposals (belt and braces —
         // the candidate construction is already constrained).
-        for i in 0..self.keys.len() {
-            if let Some(e) = proposals[i] {
-                let clamped = self.clamp_to_constraints(i, e);
-                proposals[i] = Some(clamped);
+        for (i, prop) in proposals.iter_mut().enumerate() {
+            if let Some(e) = *prop {
+                *prop = Some(self.clamp_to_constraints(i, e));
             }
         }
         // Apply the gated proposals.
@@ -640,8 +639,8 @@ impl AdaptiveGeometry {
         // 2. neighbor competition: resolve both-way expansions deterministically.
         self.competition(&mut cand);
         // 3. hard-constraint clamp.
-        for i in 0..self.keys.len() {
-            cand[i] = self.clamp_to_constraints(i, cand[i]);
+        for (i, c) in cand.iter_mut().enumerate() {
+            *c = self.clamp_to_constraints(i, *c);
         }
         // 4. objective gate (hysteresis + max_update) against the current hit.
         let mut out = vec![None; self.keys.len()];
@@ -775,15 +774,10 @@ impl AdaptiveGeometry {
         }
         let nbs = self.neighbor_ellipses(i);
         let limit = self.constraints.violated_by(g, out, &nbs);
-        if let Some(v) = limit {
-            match v {
-                ConstraintViolation::Overlap => {
-                    // Conservative: pull the box back toward the visual box.
-                    let cur = self.keys[i].hit;
-                    out = self.lerp(cur, out, 0.5);
-                }
-                _ => {}
-            }
+        if let Some(ConstraintViolation::Overlap) = limit {
+            // Conservative: pull the box back toward the visual box.
+            let cur = self.keys[i].hit;
+            out = self.lerp(cur, out, 0.5);
         }
         // Record the limiting constraint for explainability (re-check after
         // the conservative pull so the reported limit is the final one).
@@ -936,7 +930,11 @@ pub struct SeededRng(u64);
 
 impl SeededRng {
     pub const fn new(seed: u64) -> Self {
-        SeededRng(if seed == 0 { 0x9E3779B97F4A7C15 } else { seed })
+        SeededRng(if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        })
     }
 
     /// Next u64 in [0, 2^64).
@@ -946,7 +944,7 @@ impl SeededRng {
         x ^= x << 25;
         x ^= x >> 27;
         self.0 = x;
-        x.wrapping_mul(0x2545F4914F6CDD1D)
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
     /// Next f64 in [0, 1).
@@ -1026,7 +1024,7 @@ pub fn synthetic_dataset(
     samples_per_key: u32,
     seed: u64,
 ) -> Vec<Sample> {
-    let mut rng = SeededRng::new(seed ^ (visual.len() as u64 * 2654435761));
+    let mut rng = SeededRng::new(seed ^ (visual.len() as u64 * 2_654_435_761));
     // The layout extent (for edge / arc biases that depend on position).
     let max_x = visual
         .iter()
@@ -1054,9 +1052,9 @@ pub fn synthetic_dataset(
                 ((bx, 0.0), (0.08, 0.08), false)
             }
             PopulationKind::RareKey => ((0.0, 0.0), (0.08, 0.08), i % 7 == 0),
-            PopulationKind::FrequentKey => ((0.0, 0.0), (0.08, 0.08), false),
-            PopulationKind::OutlierHeavy => ((0.0, 0.0), (0.08, 0.08), false),
-            PopulationKind::Bimodal => ((0.0, 0.0), (0.08, 0.08), false),
+            PopulationKind::FrequentKey
+            | PopulationKind::OutlierHeavy
+            | PopulationKind::Bimodal => ((0.0, 0.0), (0.08, 0.08), false),
         };
         let n = if rare {
             (samples_per_key / 8).max(1)
@@ -1148,22 +1146,21 @@ mod tests {
     #[test]
     fn initial_hit_geometry_is_the_visual_baseline() {
         let (ag, visual, _) = three_key_geometry();
-        for i in 0..visual.len() {
-            let c = visual[i].center();
+        for (i, v) in visual.iter().enumerate() {
+            let c = v.center();
             let h = ag.hit(i);
-            assert_eq!(h.cx, c.x);
-            assert_eq!(h.cy, c.y);
-            assert_eq!(h.rx, visual[i].w / 2.0);
-            assert_eq!(h.ry, visual[i].h / 2.0);
+            assert!((h.cx - c.x).abs() < 1e-9);
+            assert!((h.cy - c.y).abs() < 1e-9);
+            assert!((h.rx - v.w / 2.0).abs() < 1e-9);
+            assert!((h.ry - v.h / 2.0).abs() < 1e-9);
         }
     }
 
     #[test]
     fn hit_test_assigns_visual_centers() {
         let (ag, visual, _) = three_key_geometry();
-        for i in 0..visual.len() {
-            let c = visual[i].center();
-            assert_eq!(ag.hit_test(c), Some(i));
+        for (i, v) in visual.iter().enumerate() {
+            assert_eq!(ag.hit_test(v.center()), Some(i));
         }
     }
 
@@ -1212,9 +1209,9 @@ mod tests {
         ag.reset();
         let c1 = visual[1].center();
         let h = ag.hit(1);
-        assert_eq!(h.cx, c1.x);
-        assert_eq!(h.cy, c1.y);
-        assert_eq!(h.rx, visual[1].w / 2.0);
+        assert!((h.cx - c1.x).abs() < 1e-9);
+        assert!((h.cy - c1.y).abs() < 1e-9);
+        assert!((h.rx - visual[1].w / 2.0).abs() < 1e-9);
         assert_eq!(ag.stats(1).samples, 0);
         assert_eq!(ag.frequency(1), 0);
     }

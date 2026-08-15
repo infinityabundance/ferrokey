@@ -19,6 +19,9 @@ use ferrokey_terminal::shell::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// The clear-screen sequence readline emits on Ctrl+L (SHELL.PTY.001).
+const CLEAR: &[u8] = b"\x1b[H\x1b[2J";
+
 fn gate(id: &str, label: &str, pass: bool, detail: &str) {
     println!(
         "SHELL.{}  {} ... {}",
@@ -126,7 +129,7 @@ fn shell_courts() {
                 && !ctx.tmux
                 && !ctx.ssh
                 && ctx.row_id() == "bash",
-            &format!("{:?}", ctx),
+            &format!("{ctx:?}"),
         );
         // fish → bash (nested shell: the deepest interactive shell wins)
         let tree = FakeTree::new().node(1, "fish", &[2]).node(2, "bash", &[]);
@@ -135,7 +138,7 @@ fn shell_courts() {
             "NESTED.001b",
             "fish -> bash resolves to bash",
             ctx.kind == ShellKind::Bash && ctx.row_id() == "bash",
-            &format!("{:?}", ctx),
+            &format!("{ctx:?}"),
         );
         // zsh → tmux → nested bash: tmux context wins the row
         let tree = FakeTree::new()
@@ -147,7 +150,7 @@ fn shell_courts() {
             "TMUX.001",
             "tmux in the tree selects the tmux row",
             ctx.tmux && ctx.row_id() == "tmux" && !shell_row("tmux").is_empty(),
-            &format!("{:?}", ctx),
+            &format!("{ctx:?}"),
         );
         // bash → ssh: remote shell unknowable → generic row
         let tree = FakeTree::new().node(1, "bash", &[2]).node(2, "ssh", &[]);
@@ -159,7 +162,7 @@ fn shell_courts() {
             "SSH.001",
             "ssh => remote uncertainty, generic row",
             ctx.ssh && ctx.row_id() == "ssh" && same_as_generic,
-            &format!("{:?}", ctx),
+            &format!("{ctx:?}"),
         );
         // unreadable tree → Unknown → generic (nothing breaks)
         let empty = FakeTree::new();
@@ -168,7 +171,7 @@ fn shell_courts() {
             "UNKNOWN.001b",
             "unreadable tree degrades to generic",
             ctx.kind == ShellKind::Unknown && ctx.row_id() == "generic",
-            &format!("{:?}", ctx),
+            &format!("{ctx:?}"),
         );
     }
 
@@ -300,9 +303,11 @@ fn shell_courts() {
                         let evs = s.press(*pk, Moment::from_millis(100)).unwrap_or_default();
                         for e in &evs {
                             if let ferrokey_core::KeyEvent::Down(k) = e {
-                                if let Some(b) =
-                                    encoder.encode(*k, s.held_modifiers(), &Default::default())
-                                {
+                                if let Some(b) = encoder.encode(
+                                    *k,
+                                    s.held_modifiers(),
+                                    &ferrokey_terminal::modes::TerminalModes::default(),
+                                ) {
                                     bytes.extend_from_slice(&b);
                                 }
                             }
@@ -370,9 +375,9 @@ fn shell_courts() {
                 return;
             }
         };
-        // The clear-screen sequence readline emits on Ctrl+L.
-        const CLEAR: &[u8] = b"\x1b[H\x1b[2J";
-        let mut read_until = |needle: &[u8]| -> Vec<u8> {
+        // Drain the initial prompt (bash's startup output — the PS1 override
+        // is irrelevant here; we assert on the clear-screen behavior).
+        let read_until = |needle: &[u8]| -> Vec<u8> {
             let mut buf = [0u8; 512];
             let mut collected = Vec::new();
             let deadline = Instant::now() + Duration::from_secs(6);
@@ -398,14 +403,16 @@ fn shell_courts() {
             }
             collected
         };
-        // Drain the initial prompt (bash's startup output — the PS1 override
-        // is irrelevant here; we assert on the clear-screen behavior).
         let initial = read_until(b"# ");
         let clear_before = initial.windows(CLEAR.len()).filter(|w| *w == CLEAR).count();
         // Encode the bash row's Ctrl+L through the REAL encoder and write it.
         let encoder = enc();
         let clear = encoder
-            .encode(PhysicalKey::L, ModifierSet::CTRL, &Default::default())
+            .encode(
+                PhysicalKey::L,
+                ModifierSet::CTRL,
+                &ferrokey_terminal::modes::TerminalModes::default(),
+            )
             .expect("ctrl-l encodes");
         let _ = extra_write(pty.master(), &clear);
         let after_bytes = read_until(CLEAR);

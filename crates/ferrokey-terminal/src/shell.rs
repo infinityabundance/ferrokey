@@ -214,7 +214,7 @@ impl ShellContext {
                 break; // bounded walk
             }
             if let Some(comm) = reader.comm(p) {
-                match comm.trim().as_ref() {
+                match comm.trim() {
                     "bash" | "zsh" | "fish" | "nu" | "nushell" => {
                         kind = ShellKind::from_program(comm.trim());
                     }
@@ -227,10 +227,10 @@ impl ShellContext {
             stack.append(&mut kids);
         }
         // The identity is authoritative only when we actually saw a shell.
-        let source = if kind != ShellKind::Unknown {
-            ShellIdentitySource::ProcessInspection
-        } else {
+        let source = if kind == ShellKind::Unknown {
             ShellIdentitySource::Unknown
+        } else {
+            ShellIdentitySource::ProcessInspection
         };
         ShellContext {
             kind,
@@ -512,16 +512,16 @@ pub fn encode_sequence(
 ) -> Vec<u8> {
     use ferrokey_core::ModifierSet;
     let mut out = Vec::new();
-    let modes = crate::modes::TerminalModes::default();
+    let term_modes = crate::modes::TerminalModes::default();
     for group in sequence {
-        let mut mods = ModifierSet::empty();
+        let mut held_mods = ModifierSet::empty();
         for &key in *group {
             if let Some(kind) = key.modifier_kind() {
-                mods = mods.union(kind.into());
+                held_mods = held_mods.union(kind.into());
             }
         }
         for &key in *group {
-            if let Some(bytes) = encoder.encode(key, mods, &modes) {
+            if let Some(bytes) = encoder.encode(key, held_mods, &term_modes) {
                 out.extend_from_slice(&bytes);
             }
         }

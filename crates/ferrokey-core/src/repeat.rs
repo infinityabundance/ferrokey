@@ -235,7 +235,7 @@ pub struct HeldKeysIter<'a> {
     idx: usize,
 }
 
-impl<'a> Iterator for HeldKeysIter<'a> {
+impl Iterator for HeldKeysIter<'_> {
     type Item = PhysicalKey;
 
     fn next(&mut self) -> Option<PhysicalKey> {
