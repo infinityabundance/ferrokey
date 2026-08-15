@@ -536,8 +536,33 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
     let mut terminal_input = term_input::TerminalInput::default();
     let keyboard_h_phys = keyboard_h;
 
+    // WS5: shell-aware terminal rows. The initial identity is KNOWN from the
+    // child Ferrokey itself spawned (§5.2); later transitions are learned
+    // from the process tree (§5.3), throttled in the UI loop. Rows are
+    // presentation-only (§5.10).
+    let shell_row_id: std::cell::RefCell<&'static str> = std::cell::RefCell::new("generic");
+    if let Some(term) = &terminal {
+        let spawned = terminal_cfg
+            .shell
+            .clone()
+            .or_else(|| std::env::var("SHELL").ok())
+            .unwrap_or_else(|| "/bin/sh".into());
+        let ctx = ferrokey_terminal::shell::ShellContext::from_spawned_shell(&spawned);
+        let id = ctx.row_id();
+        if ctx.is_confident() {
+            let row = ferrokey_terminal::shell::shell_row(id);
+            bridge.set_shell_row(Some(row));
+            set_terminal_shortcut_row(&ui, view, Some(row));
+            *shell_row_id.borrow_mut() = id;
+            log::info!("terminal shell context: {id} (spawned child)");
+        }
+        let _ = term; // the terminal itself keeps running; the context probe
+                      // below inspects its child's process tree
+    }
+
     let mut last_ping = Instant::now();
     let mut last_status_update = Instant::now();
+    let mut last_shell_probe = Instant::now();
     loop {
         bridge.set_scale(platform.scale());
 
@@ -618,6 +643,32 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
         // 4a. Adaptive geometry: the optimizer runs off the touch hot path,
         // once per UI frame when enough new evidence has accumulated (WS4).
         bridge.tick_adaptive();
+
+        // 4c. Shell context refresh (WS5 §5.3): inspect the child's process
+        // tree (shell → vim/htop/tmux/nested shell) once per second. Rows
+        // are presentation-only: only the shortcut row's key sequences and
+        // labels change — no keys are released/pressed, no modes, resize or
+        // child restart.
+        if let Some(term) = &terminal {
+            if now.duration_since(last_shell_probe) > Duration::from_secs(1) {
+                last_shell_probe = now;
+                let ctx = term
+                    .borrow()
+                    .child_pid()
+                    .map(ferrokey_terminal::shell::ShellContext::inspect)
+                    .unwrap_or(ferrokey_terminal::shell::ShellContext::UNKNOWN);
+                if ctx.is_confident() {
+                    let id = ctx.row_id();
+                    if id != *shell_row_id.borrow() {
+                        let row = ferrokey_terminal::shell::shell_row(id);
+                        bridge.set_shell_row(Some(row));
+                        set_terminal_shortcut_row(&ui, view, Some(row));
+                        *shell_row_id.borrow_mut() = id;
+                        log::info!("terminal shell context -> {id} (process inspection)");
+                    }
+                }
+            }
+        }
 
         // 4b. Repeat engine diagnostics (throttled).
         if Instant::now().duration_since(last_status_update) > Duration::from_millis(500) {
@@ -834,4 +885,46 @@ fn set_keyboard_view(ui: &MainWindow, layout: &ferrokey_core::Layout, view: &vie
             _ => log::warn!("view {} has more than 7 rows; extra rows ignored", view.id),
         }
     }
+}
+
+/// Re-render the terminal view's shortcut row from the active shell-aware
+/// row (WS5). Presentation-only (§5.10): the keys/sequences change, nothing
+/// else does — no held keys are released, no keys pressed, no modes, no
+/// resize, no child restart. The bridge is given the same row so its chord
+/// lookup matches the rendered buttons.
+fn set_terminal_shortcut_row(
+    ui: &MainWindow,
+    view: &views::KeyboardView,
+    row: Option<&'static [ferrokey_terminal::shell::ShellRowKey]>,
+) {
+    use slint::VecModel;
+    if view.id != "terminal" {
+        return;
+    }
+    let keys: Vec<KeyData> = match row {
+        Some(row) => row
+            .iter()
+            .map(|k| KeyData {
+                name: k.label.into(),
+                label: k.label.into(),
+                width: 1.25,
+            })
+            .collect(),
+        // Fall back to the static shortcut row (the first terminal row).
+        None => view
+            .rows
+            .first()
+            .map(|row| {
+                row.keys
+                    .iter()
+                    .map(|vk| KeyData {
+                        name: vk.name.into(),
+                        label: vk.name.into(),
+                        width: vk.width,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
+    ui.set_row1(ModelRc::from(Rc::new(VecModel::from(keys))));
 }

@@ -91,7 +91,7 @@ else
 fi
 
 # ── ARCH.DOCS.003 terminal path accurate ────────────────────────────────────
-TERM_SYMBOLS=(TerminalKeySink TerminalKeyEncoder PtySink PtyPair ChildHandle)
+TERM_SYMBOLS=(TerminalKeySink TerminalKeyEncoder PtySink PtyPair ChildHandle ShellContext ShellKind ShellIdentitySource ShellRowKey)
 TERM_MISSING=()
 for s in "${TERM_SYMBOLS[@]}"; do
     grep -rq "$s" "$CRATES/ferrokey-terminal/src" 2>/dev/null || TERM_MISSING+=("$s")

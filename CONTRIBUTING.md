@@ -226,11 +226,30 @@ Deterministic replay: same dataset + same baseline + same optimizer version
 
 ### Adding a shell-aware row
 
-Shell rows are keyboard semantics, never hidden shell commands: row button
-→ key/chord → `TerminalKeyEncoder` → PTY bytes. Add the row definition in
-`src/views.rs` (terminal view), the byte fixtures, and a `SHELL.*` court
-assertion. `Unknown` shell identity must always fall back to the generic
-terminal row.
+Shell rows live in `crates/ferrokey-terminal/src/shell.rs` (the model:
+`ShellKind`, `ShellContext`, the `*_ROW` chord tables) and are consumed by
+the terminal view's shortcut row in `src/main.rs` + `src/pointer.rs`. Rows
+are keyboard semantics, never hidden shell commands: row button →
+key/chord sequence → `TerminalKeyEncoder` → PTY bytes (§5.5). Changing a
+row or the context model:
+
+1. Edit the row table in `shell.rs`; every action must be a real binding of
+   the target shell (never invented — configuration-dependent shortcuts are
+   documented as such, and directory-stack-style actions with no default
+   bindings are omitted).
+2. Add or update the exact byte fixtures in
+   `crates/ferrokey-terminal/tests/shell_courts.rs` (SHELL.BYTES.001) and
+   the row-semantics gate (SHELL.<SHELL>.002).
+3. Run the court (inside the builder container, never on the host):
+
+```sh
+bash testing/scripts/shell-court.sh
+```
+
+`Unknown` shell identity must always fall back to the generic terminal row
+(SHELL.UNKNOWN.001), and row switching must stay presentation-only — the
+SHELL.STATE.001 court proves no row sequence leaves held keys or
+latched/locked modifiers behind.
 
 ## Documentation
 

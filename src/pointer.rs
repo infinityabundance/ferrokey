@@ -15,6 +15,7 @@ use crate::views::{self, KeyboardView};
 use crate::MainWindow;
 use ferrokey_core::geometry::{AdaptiveGeometry, Point};
 use ferrokey_surface::{PointerButton, SurfaceEvent};
+use ferrokey_terminal::shell::ShellRowKey;
 use std::collections::BTreeMap;
 
 /// Owns the pointer/touch → key translation for one session.
@@ -35,6 +36,11 @@ pub struct PointerBridge {
     /// key index → name, in view order (the adaptive geometry's index
     /// space, matching [`views::adaptive_geometry_basis`]).
     names: Vec<&'static str>,
+    /// The active shell-aware row (WS5): its keys' sequences win over the
+    /// static view chords. Presentation-only: switching never releases
+    /// held keys, presses keys, changes modifiers, resets modes, resizes
+    /// the terminal or restarts the child (§5.10).
+    shell_row: Option<&'static [ShellRowKey]>,
     /// Normalized-distance confidence below which a touch is an unambiguous
     /// intended-key sample (evidence rule §4.3).
     evidence_confidence: f64,
@@ -64,10 +70,28 @@ impl PointerBridge {
             scale,
             adaptive,
             names,
+            shell_row: None,
             evidence_confidence,
             pointer_down: BTreeMap::new(),
             touch_down: None,
         }
+    }
+
+    /// Switch the active shell-aware row (WS5). Presentation-only (§5.10):
+    /// this changes which sequences the shortcut buttons play — it never
+    /// releases held keys, presses keys, changes modifier state, resets
+    /// terminal modes, resizes the terminal or restarts the child.
+    pub fn set_shell_row(&mut self, row: Option<&'static [ShellRowKey]>) {
+        self.shell_row = row;
+    }
+
+    /// The shell-row sequence for a button label, if the active row has one.
+    fn shell_sequence_for(
+        &self,
+        name: &str,
+    ) -> Option<&'static [&'static [ferrokey_core::PhysicalKey]]> {
+        let row = self.shell_row?;
+        row.iter().find(|k| k.label == name).map(|k| k.sequence)
     }
 
     /// Keep the bridge's scale in sync with the surface (HiDPI).
@@ -93,7 +117,9 @@ impl PointerBridge {
                 let name = self.key_at(x, y);
                 log::debug!("pointer press ({x:.0},{y:.0}) btn={button:?} -> key {name:?}");
                 if let Some(name) = name {
-                    if let Some(chord) = self.view.chord_for(name) {
+                    if let Some(seq) = self.shell_sequence_for(name) {
+                        self.play_sequence(ui, seq);
+                    } else if let Some(chord) = self.view.chord_for(name) {
                         self.play_chord(ui, chord);
                     } else {
                         self.pointer_down.insert(button, name);
@@ -120,7 +146,9 @@ impl PointerBridge {
             SurfaceEvent::TouchPressed { x, y } => {
                 if self.touch_down.is_none() {
                     if let Some(name) = self.touch_key_at(x, y) {
-                        if let Some(chord) = self.view.chord_for(name) {
+                        if let Some(seq) = self.shell_sequence_for(name) {
+                            self.play_sequence(ui, seq);
+                        } else if let Some(chord) = self.view.chord_for(name) {
                             self.play_chord(ui, chord);
                         } else {
                             self.touch_down = Some(name);
@@ -197,6 +225,26 @@ impl PointerBridge {
         }
         for name in chord.iter().rev() {
             ui.invoke_key_released((*name).into());
+        }
+    }
+
+    /// Play a shell-row key sequence (WS5 §5.5): each press-group is
+    /// pressed and fully released before the next group starts — the honest
+    /// keyboard semantics behind tmux prefixes and post-prefix keys. Every
+    /// key flows through the normal core state machine into the active
+    /// destination; never a hidden shell command.
+    fn play_sequence(
+        &self,
+        ui: &MainWindow,
+        sequence: &'static [&'static [ferrokey_core::PhysicalKey]],
+    ) {
+        for group in sequence {
+            for key in *group {
+                ui.invoke_key_pressed((*key).name().into());
+            }
+            for key in group.iter().rev() {
+                ui.invoke_key_released((*key).name().into());
+            }
         }
     }
 }

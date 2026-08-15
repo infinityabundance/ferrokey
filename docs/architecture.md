@@ -280,6 +280,21 @@ Terminal mode is deliberately **not broker-mediated**: no `ferrokeyd`, no
 produces the events; the destination decides where they go.
 (`docs/sequence/terminal-input.mmd`)
 
+**Shell-aware rows (WS5):** the shortcut row above the terminal keyboard is
+context-sensitive. The model lives in `ferrokey-terminal::shell`:
+`ShellContext` tracks the interactive shell (`ShellKind`: bash/zsh/fish/
+nushell/unknown) and how it was learned (`ShellIdentitySource`): the
+initial child is **known from the spawn** (§5.2); later transitions
+(shell → vim/htop/tmux/nested shell) come from bounded inspection of the
+local `/proc` process tree the terminal owns (§5.3). Rows are pure
+keyboard semantics — button → key/chord sequence → `TerminalKeyEncoder` →
+PTY bytes, never a hidden shell command (§5.5). `Unknown`/ssh always fall
+back to the generic row (§5.4, §5.12); tmux exposes `Ctrl+B` prefix
+key-sequences (§5.11); row switching is presentation-only — no keys are
+released/pressed, no modes reset, no resize, no child restart (§5.10).
+Exact PTY-byte fixtures for every row action are pinned by the SHELL.*
+courts (§5.14).
+
 ### 3.3 Destination switching
 
 Switching is explicit and safe: the driver is `emergency_release`d first
@@ -366,6 +381,9 @@ unregisters the uinput device when the fd closes (proven by
 | Adaptation is deterministic (same baseline + dataset + version ⇒ same output) | pure f64 pipeline, fixed-seed populations | adaptive-geometry (ADAPT.REPLAY.001, ADAPT.NEIGHBOR.001) | proved: `ADAPT.REPLAY.001` (WS4 court) |
 | Freeze/reset are exact user controls | `AdaptiveGeometry::set_frozen` / `reset` | adaptive-geometry (ADAPT.FREEZE.001, ADAPT.RESET.001) | proved: `ADAPT.FREEZE.001`, `ADAPT.RESET.001` (WS4 court) |
 | Adaptive hit regions measurably reduce miss rate where improvement is possible | `AdaptiveGeometry::evaluate` over 10 synthetic populations | adaptive-geometry (ADAPT.METRIC.001) | proved: `ADAPT.METRIC.001` (WS4 court, metric report) |
+| Shell identity is known from the spawn; transitions come from owned process evidence | `ShellContext::from_spawned_shell` / `inspect` | shell-rows (SHELL.BASH.001, SHELL.NESTED.001, SHELL.TMUX.001, SHELL.SSH.001) | proved: `SHELL.*` (WS5 court) |
+| Shell rows are keyboard semantics with exact PTY bytes | `ShellRowKey` sequences → `TerminalKeyEncoder` | shell-rows (SHELL.BYTES.001, SHELL.PTY.001 — real bash in a real PTY) | proved: `SHELL.BYTES.001`, `SHELL.PTY.001` (WS5 court) |
+| Row switching is presentation-only (no input-state corruption) | row sequences through the real state machine leave zero held keys | shell-rows (SHELL.STATE.001) | proved: `SHELL.STATE.001` (WS5 court) |
 | Broker post-freeze cannot open devices/network/ioctl | `sandbox.rs` filter + probes | kernel-security (SEC.SECCOMP.*, SEC.NET.*), mutation | — |
 | Session binding refuses out-of-scope peers | `serve.rs authorize` + `session_scope.rs` | session-lifetime | — |
 | Backend selected by capability, not name | `ferrokey-surface::detect::decide` (pure) | backend-selection | — |

@@ -16,6 +16,11 @@ thiserror.workspace = true
 ab_glyph = "0.2.29"
 unicode-width = "0.2.1"
 
+[dev-dependencies]
+# The real US layout for the shell-row byte fixtures (WS5 §5.14): the
+# fixtures must encode through the production layout, not an empty one.
+ferrokey-layouts.workspace = true
+
 [lints.rust]
 # The workspace forbids unsafe; this crate relaxes to `deny` so the single
 # audited raw-syscall module (src/syscall.rs, TIOCSWINSZ) can carry an

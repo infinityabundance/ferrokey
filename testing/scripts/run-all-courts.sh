@@ -73,6 +73,10 @@ echo
  echo "── ADAPTIVE GEOMETRY COURT (WS4) ──"
  bash scripts/adaptive-court.sh
 
+ echo
+ echo "── SHELL-AWARE ROWS COURT (WS5) ──"
+ bash scripts/shell-court.sh
+
 echo
  echo "── VM COURTS (X11 profile) ──"
  for court in kernel-security systemd soak socket-hijack cross-user device-lifetime uinput permissions x11 focus crash \

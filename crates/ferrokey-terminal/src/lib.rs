@@ -59,6 +59,7 @@ pub mod pty;
 pub mod render;
 pub mod scrollback;
 pub mod selection;
+pub mod shell;
 pub mod sink;
 pub mod terminal;
 pub mod viewport;
@@ -78,6 +79,10 @@ pub use render::{
 };
 pub use scrollback::{Scrollback, ScrollbackError};
 pub use selection::{expand_word, CellPos, Selection, SelectionMode};
+pub use shell::{
+    encode_sequence, shell_row, ProcReader, ProcTreeReader, ShellContext, ShellIdentitySource,
+    ShellKind, ShellRowKey, BASH_ROW, FISH_ROW, GENERIC_ROW, NUSHELL_ROW, TMUX_ROW, ZSH_ROW,
+};
 pub use sink::{PtySink, TerminalInputSink, TerminalKeySink, TerminalSinkError};
 pub use terminal::{PasteOutcome, Terminal, TerminalConfig, TerminalError, TerminalEvent};
 pub use viewport::Viewport;
