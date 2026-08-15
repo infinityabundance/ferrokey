@@ -56,8 +56,13 @@ echo "── BUILD + CORE UNIT COURTS (Docker) ──"
 bash scripts/run-unit-court.sh
 
 echo
-echo "── CLEAN BUILD COURT (empty caches) ──"
-bash scripts/run-clean-court.sh
+ echo "── CLEAN BUILD COURT (empty caches) ──"
+ bash scripts/run-clean-court.sh
+
+ echo
+ echo "── DOCUMENTATION DRIFT COURTS (WS1/WS2) ──"
+ bash scripts/architecture-drift.sh
+ bash scripts/man-drift.sh
 
 echo
  echo "── VM COURTS (X11 profile) ──"

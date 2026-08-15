@@ -79,6 +79,7 @@ members = [
     "crates/ferrokey-surface",
     "crates/ferrokey-terminal",
     "crates/ferrokeyd",
+    "xtask",
 ]
 
 [workspace.package]

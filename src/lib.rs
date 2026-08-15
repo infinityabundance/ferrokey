@@ -21,9 +21,15 @@
 //!   and the custom Slint platform adapter.
 //! * [`uinput`](crate::uinput) — the uinput virtual keyboard (created once by
 //!   the bootstrap component) with its defensive held-key ledger.
+//! * [`terminal`](crate::terminal) — the embedded PTY terminal engine.
 
 pub use ferrokey_core as core;
 pub use ferrokey_layouts as layouts;
 pub use ferrokey_protocol as protocol;
 pub use ferrokey_surface as surface;
+pub use ferrokey_terminal as terminal;
 pub use ferrokey_uinput as uinput;
+
+/// The UI configuration schema, exposed for tooling (the xtask man-page
+/// verification parses the documented examples through the real parser).
+pub mod config;

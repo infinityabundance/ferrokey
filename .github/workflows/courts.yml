@@ -42,6 +42,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install man-page toolchain
+        # The documentation drift courts (architecture + man pages) render
+        # troff with groff — the standard man toolchain.
+        run: sudo apt-get update && sudo apt-get install -y groff
+
       - name: Full court suite (incl. SEC.* security courts)
         # The release gate (a v* tag push — there is no `release` event in
         # this workflow) runs the full-duration soak; PRs and main get the

@@ -190,13 +190,15 @@ terminal row.
   (`bash testing/scripts/architecture-drift.sh`) fails if documented
   crates/commands/courts/proofs stop existing — update the docs with the
   code.
-- Man pages: `docs/man/*.scd` rendered with scdoc:
+- Man pages: standard troff sources in `docs/man/` (`ferrokey.1`, `ferrokeyd.1`,
+  `ferrokey.yaml.5`, `ferrokeyd.yaml.5`), rendered + example-verified with
+  groff (the native man-page toolchain — no extra dependency):
 
 ```sh
 cargo xtask man
 ```
 
-  (writes rendered pages to `docs/man/out/`; fails on scdoc failure).
+  (writes rendered pages to `docs/man/out/`; fails on groff failure).
   The CLI/config drift check is part of the man-page court — a public
   option or config field that is not documented makes the court fail.
 

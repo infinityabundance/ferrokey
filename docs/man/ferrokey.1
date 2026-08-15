@@ -1,0 +1,187 @@
+.TH FERROKEY 1 "August 2026" "Ferrokey" "Ferrokey Manual"
+.SH NAME
+ferrokey \- on-screen keyboard with focus preservation and an embedded terminal workspace
+.SH SYNOPSIS
+.B ferrokey
+[\fB\-\-config\fR \fIpath\fR] [\fB\-\-layout\fR \fIid\fR] [\fB\-\-view\fR \fIcompact|full\fR]
+[\fB\-\-terminal\fR] [\fB\-\-terminal\-height\fR \fIpx\fR] [\fB\-\-diagnose\fR]
+.SH DESCRIPTION
+.B ferrokey
+is the Ferrokey on-screen keyboard (OSK). It renders a keyboard over the
+focused application without ever stealing keyboard focus, and delivers the
+keys the user touches directly to the Linux input core through one
+pre-created
+.I /dev/uinput
+device owned by the sandboxed
+.BR ferrokeyd (1)
+broker.
+.PP
+The UI is fully unprivileged. It owns no input devices: every system key
+event is sent to
+.BR ferrokeyd (1)
+over an authenticated AF_UNIX socket using the ferrokey wire protocol; the
+broker owns
+.IR /dev/uinput .
+.PP
+In terminal workspace mode
+.RB ( \-\-terminal ),
+the same keyboard drives an embedded PTY terminal directly \- OSK to PTY \-
+with no broker, no
+.IR /dev/uinput ,
+and no compositor focus involvement.
+.PP
+The surface backend (Wayland layer-shell, X11 no-input, degraded, or none)
+is selected by capability detection at runtime, never by compositor name;
+the selection and its reason are logged at startup
+.RB ( "surface backend: " \fIname\fR " (" \fIdetail\fR ")" ).
+.SH OPTIONS
+.TP
+.B \-\-config \fIpath\fR
+Load the UI configuration from
+.I path
+(see
+.BR ferrokey.yaml (5)).
+Defaults:
+.IR /etc/ferrokey/ferrokey.yaml ,
+then
+.I $XDG_CONFIG_HOME/ferrokey/ferrokey.yaml
+(or
+.IR ~/.config/ferrokey/ferrokey.yaml ).
+If none exists, built-in defaults are used.
+.TP
+.B \-\-layout \fIid\fR
+Override the active layout. Accepts a builtin id
+.RB ( us ,
+.RB de ,
+.RB fr ,
+.RB gb ,
+.RB dvorak ,
+.RB us-intl ,
+...)
+or a system xkb spec
+.RB ( us(intl) ,
+.RB de@neo ,
+...).
+The system xkb path requires the xkb feature and libxkbcommon at runtime.
+.TP
+.B \-\-view \fIcompact|full\fR
+Override the keyboard view. Views are visual arrangements over the same
+physical-key engine; the view's preferred window size wins over the config
+width/height.
+.TP
+.B \-\-terminal
+Start in embedded terminal workspace mode: a PTY pane below the OSK, driven
+directly by the keyboard (no ferrokeyd). The child is the configured
+terminal shell (default:
+.IR $SHELL ,
+then
+.IR /bin/sh ).
+.TP
+.B \-\-terminal\-height \fIpx\fR
+Terminal pane height in physical pixels (default 420, valid 200\(en4000).
+.TP
+.B \-\-diagnose
+Print terminal-workspace diagnostics and exit without touching the display.
+Also accepted as the bare word
+.BR diagnose .
+.TP
+.BR \-h ", " \-\-help
+Print usage and exit.
+.SH MODES
+.TP
+.B System mode
+(default): key events flow OSK to keyboard semantics to the broker to
+/dev/uinput to the focused application.
+.TP
+.B Terminal workspace mode
+.RB ( \-\-terminal ):
+key events flow OSK to keyboard semantics to the terminal key encoder to the
+PTY to the child process. The destination is switched explicitly in the UI;
+switching releases all held keys first (a key-down never crosses
+destinations).
+.TP
+.B Diagnostics mode
+.RB ( \-\-diagnose ):
+prints the terminal engine diagnostics (destination, terminal mode, PTY
+status, child state) and exits.
+.SH CONFIGURATION
+The UI configuration is read from
+.BR ferrokey.yaml (5).
+Every field is optional; missing fields fall back to defaults.
+.SH ENVIRONMENT
+.TP
+.B WAYLAND_DISPLAY
+Wayland session socket name (relative to
+.BR XDG_RUNTIME_DIR ,
+or an absolute path). Its presence (and the availability of
+.B zwlr_layer_shell_v1
+) selects the wayland-layer-shell backend.
+.TP
+.B DISPLAY
+X11 display. With no Wayland session it selects the x11-no-input backend;
+with a Wayland session lacking layer-shell it selects the XWayland fallback.
+.TP
+.B XDG_RUNTIME_DIR
+Runtime directory used for the Wayland socket lookup and the default daemon
+socket path.
+.TP
+.B XDG_CONFIG_HOME ", " HOME
+Search paths for the default config file.
+.TP
+.B SHELL
+The terminal workspace child when the config does not set a shell.
+.TP
+.B RUST_LOG
+Log filter for the runtime logs (e.g.
+.RB info ,
+.RB "ferrokey=trace" ).
+.SH FILES
+.TP
+.I /etc/ferrokey/ferrokey.yaml
+System-wide UI configuration.
+.TP
+.I ~/.config/ferrokey/ferrokey.yaml
+Per-user UI configuration.
+.TP
+.I /run/ferrokeyd/ferrokeyd.sock
+Default daemon socket (configurable via
+.IR socket_path ).
+.SH EXIT STATUS
+.TP
+.B 0
+Success (including
+.B \-\-diagnose
+and
+.BR \-\-help ).
+.TP
+.B 1
+Configuration error, unknown argument, surface connect failure, or a
+runtime error.
+.SH DIAGNOSTICS
+On startup the backend selection is logged:
+.RB ( "surface backend: " \fIname\fR " (" \fIdetail\fR ")" ).
+Degraded modes
+.RB ( wayland-degraded ,
+.RB none )
+print explicit reasons. Use
+.B RUST_LOG=debug
+for the full startup trace and
+.B \-\-diagnose
+for the terminal workspace state.
+.SH EXAMPLES
+Start with the default configuration:
+.nf
+    ferrokey
+.fi
+Start in terminal workspace mode with a 600 px pane:
+.nf
+    ferrokey \-\-terminal \-\-terminal\-height 600
+.fi
+Use a specific config and layout:
+.nf
+    ferrokey \-\-config /etc/ferrokey/ferrokey.yaml \-\-layout "de@neo"
+.fi
+.SH SEE ALSO
+.BR ferrokey.yaml (5),
+.BR ferrokeyd (1),
+.BR ferrokeyd.yaml (5)

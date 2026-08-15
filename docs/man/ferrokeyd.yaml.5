@@ -1,0 +1,96 @@
+.TH FERROKEYD.YAML 5 "August 2026" "Ferrokey" "Ferrokey Manual"
+.SH NAME
+ferrokeyd.yaml \- Ferrokey broker security-boundary configuration
+.SH DESCRIPTION
+Security-boundary configuration for
+.BR ferrokeyd (1).
+This file is the authorization and hardening policy of the privileged
+supervisor; it must be owned by root and mode 0644
+.RB ( "install \-m 0644 ferrokeyd.yaml /etc/ferrokey/ferrokeyd.yaml" ).
+A user-writable config loaded by the privileged supervisor is refused.
+.PP
+Every field is optional; missing fields fall back to the defaults below.
+Values are validated against hard bounds at load time.
+.SH FIELDS
+.TP
+.B socket_path
+Type: string (path). Default: "/run/ferrokeyd/ferrokeyd.sock". The AF_UNIX
+socket the broker listens on. Validation: non-empty, at most 107 bytes; the
+parent directory must exist, be owned by the service user, and not be
+group/world-writable.
+.TP
+.B socket_mode
+Type: octal integer. Default: 0666. The socket mode applied after creation.
+0666 lets the unprivileged desktop UI connect; the real authority is the
+SO_PEERCRED whitelist. Validation: at most 0777.
+.TP
+.B allowed_uids
+Type: list of integers. Default: [] (deny-all). UIDs allowed to connect,
+verified by the kernel via SO_PEERCRED; never supplied by the client.
+.TP
+.B allowed_gids
+Type: list of integers. Default: []. GIDs allowed to connect.
+.TP
+.B max_connections
+Type: integer. Default: 1. Maximum concurrent client connections.
+Validation: 1..64.
+.TP
+.B rate
+Type: map. Token-bucket rate limiting applied before any expensive work.
+.RS
+.TP
+.B rate.burst
+integer, default 200: maximum burst of messages.
+.TP
+.B rate.per_second
+integer, default 200: sustained messages per second.
+.RE
+.RS
+Validation: 1..10000.
+.RE
+.TP
+.B max_held_keys
+Type: integer. Default: 16. Maximum simultaneously-held keys on the virtual
+device. Validation: 1..32.
+.TP
+.B device_name
+Type: string. Default: "Ferrokey Virtual Keyboard". The name reported by
+the virtual keyboard device. ABI-like: fixed at startup, never
+client-controlled. Validation: at most 79 bytes.
+.TP
+.B service_user ", " service_group
+Type: string. Defaults: "ferrokeyd". The dedicated unprivileged identity
+the runtime broker drops to (groups, then gid, then uid, before the
+freeze). The supervisor must be privileged enough to setuid/setgid to these
+values.
+.TP
+.B session_scope
+Type: string or null. Default: null (UID/GID-only authorization, the
+Phase-3 baseline). Optional logind session-scope binding: when set, a
+client is authorized only if its cgroup carries the SAME session scope. The
+value is the cgroup scope name (form
+.IR session-N.scope );
+the number is assigned by the session manager at login and is
+deployment-specific \- do not hard-code it in static configs (dynamic
+session discovery is planned packaging work). Validation: strictly the form
+.IR session-\fIdigits\fP.scope ,
+no path syntax.
+.SH EXAMPLE
+.nf
+    socket_path: /run/ferrokeyd/ferrokeyd.sock
+    socket_mode: 438       # 0o666
+    allowed_uids: [1000]
+    allowed_gids: []
+    max_connections: 1
+    rate:
+      burst: 200
+      per_second: 200
+    max_held_keys: 16
+    device_name: "Ferrokey Virtual Keyboard"
+    service_user: ferrokeyd
+    service_group: ferrokeyd
+.fi
+.SH SEE ALSO
+.BR ferrokeyd (1),
+.BR ferrokey.yaml (5),
+.BR ferrokey (1)

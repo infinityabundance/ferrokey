@@ -91,8 +91,10 @@ flaky, race-prone keyboard state. Ferrokey sidesteps the entire problem:
 | `ferrokeyd` | [crates.io](https://crates.io/crates/ferrokeyd) | the constrained broker: supervisor, bootstrap, runtime sandbox |
 
 The `ferrokey` crate is the main application: its `ferrokey` binary is the
-UI, and its library is the umbrella re-exporting the six library crates. The
-daemon (`ferrokeyd`) lives under `crates/`.
+UI, and its library is the umbrella re-exporting `ferrokey-core`, -layouts,
+-protocol, -surface and -uinput (`ferrokey-terminal` is a workspace
+dependency of the binary, not re-exported). The daemon (`ferrokeyd`) lives
+under `crates/`.
 
 ## Building
 

@@ -1,0 +1,212 @@
+.TH FERROKEYD 1 "August 2026" "Ferrokey" "Ferrokey Manual"
+.SH NAME
+ferrokeyd \- the Ferrokey broker: supervisor, bootstrap, and sandboxed runtime
+.SH SYNOPSIS
+.B ferrokeyd
+.B start
+[\fB\-\-config\fR \fIpath\fR] [\fB\-\-foreground\fR]
+.br
+.B ferrokeyd
+.B init
+\fIhandoff-fd\fR [\fB\-\-device\-name\fR \fIname\fR] [\fB\-\-max\-held\-keys\fR \fIn\fR]
+.br
+.B ferrokeyd
+.B serve
+\fIhandoff-fd\fR [options]
+.br
+.B ferrokeyd
+.B sandbox-probe
+[\fB\-\-session\-scope\fR \fIscope\fR]
+.br
+.B ferrokeyd
+.B security-status
+\fB\-\-pid\fR \fIpid\fR
+.SH DESCRIPTION
+.B ferrokeyd
+owns the single pre-created
+.I /dev/uinput
+virtual keyboard and serves authenticated clients (the
+.BR ferrokey (1)
+UI) over an AF_UNIX socket. It is a constrained broker: after startup it
+runs non-root with zero Linux capabilities,
+.BR NO_NEW_PRIVS ,
+a seccomp allowlist, an FD inventory, and rate-limited per-connection key
+delivery.
+.PP
+The command is split into three lifecycle components plus two diagnostic
+tools. The supervisor
+.RB ( start )
+parses the root-owned security-boundary configuration, spawns the bootstrap
+.RB ( init ),
+then spawns the runtime
+.RB ( serve )
+which drops privileges and freezes itself before serving any client.
+.PP
+.B ferrokeyd serve
+refuses to run as root
+.RB ( \-\-allow-root
+is a development override that prints a warning and is never enabled
+implicitly).
+.SH COMMANDS
+.SS start
+.B ferrokeyd start
+[\fB\-\-config\fR \fIpath\fR] [\fB\-\-foreground\fR]
+.PP
+Run the supervisor: parse the root-owned config (see
+.BR ferrokeyd.yaml (5)),
+spawn
+.B init
+to create and transfer the device, then spawn
+.B serve
+with the dropped identity, and reap both children.
+.TP
+.B \-\-config \fIpath\fR
+Security-boundary configuration. Must be owned by root and mode 0644 when
+running privileged; a user-writable config is refused.
+.TP
+.B \-\-foreground
+Accepted for compatibility; the supervisor is always in the foreground.
+.PP
+Privilege expectations: root at startup (to open /dev/uinput, setuid/setgid
+to the configured service identity, and load the root-owned config).
+.PP
+Exit conditions: success when the runtime broker reports ready; non-zero on
+config error, device failure, or child failure.
+.SS init
+.B ferrokeyd init
+\fIhandoff-fd\fR [\fB\-\-device\-name\fR \fIname\fR] [\fB\-\-max\-held\-keys\fR \fIn\fR]
+.PP
+Bootstrap: open /dev/uinput, configure the exact immutable capability set,
+create one virtual keyboard
+.RB ( UI_DEV_CREATE ),
+verify its identity and capability bitmap from sysfs, transfer the device
+fd to the supervisor over SCM_RIGHTS on
+.I handoff-fd ,
+and exit.
+.PP
+Intended operational use: never run manually. The supervisor invokes it.
+.SS serve
+.B ferrokeyd serve
+\fIhandoff-fd\fR [options]
+.PP
+Runtime broker: adopt the transferred device fd, bind the AF_UNIX socket,
+drop supplementary groups then gid then uid to the configured service
+identity, clear all capabilities, set
+.BR NO_NEW_PRIVS ,
+install the seccomp filter, verify the FD inventory, and then serve clients.
+.PP
+Options (mirroring the config fields; the config is the normal source):
+.TP
+.B \-\-socket \fIpath\fR
+Socket path (default
+.IR /run/ferrokeyd/ferrokeyd.sock ).
+.TP
+.B \-\-socket\-mode \fIoctal\fR
+Socket mode applied after creation (default 0666).
+.TP
+.B \-\-max\-conn \fIn\fR
+Maximum concurrent clients (default 1, hard limit 64).
+.TP
+.B \-\-max\-held \fIn\fR
+Maximum simultaneously-held keys (default 16, hard limit 32).
+.TP
+.B \-\-burst \fIn\fR ", " \fB\-\-per\-sec\fR \fIn\fR
+Token-bucket rate limits for client messages (defaults 200/200).
+.TP
+.B \-\-device\-name \fIname\fR
+The virtual keyboard device name (default
+.RB "Ferrokey Virtual Keyboard" ).
+.TP
+.B \-\-uid \fIlist\fR ", " \fB\-\-gid\fR \fIlist\fR
+Comma-separated SO_PEERCRED whitelist (default: deny-all).
+.TP
+.B \-\-session\-scope \fIscope\fR
+Optional logind session-scope binding (form
+.IR session-N.scope );
+clients outside the bound session scope are refused.
+.TP
+.B \-\-allow\-root
+Development/testing override: allow serving as root. Prints a warning.
+.PP
+Privilege expectations: the runtime must already be non-root with the
+device fd in hand (the supervisor arranges this). Output: structured log
+lines; on failure the serve child exits non-zero and the supervisor fails.
+.SS sandbox-probe
+.B ferrokeyd sandbox-probe
+[\fB\-\-session\-scope\fR \fIscope\fR]
+.PP
+Host-safe diagnostic: install the exact runtime seccomp filter in this
+process
+.RB ( NO_NEW_PRIVS ,
+filter, enforcement probes) and print the probe report. Exits non-zero if
+any forbidden syscall is not denied. Used by the kernel-security court and
+by operators to prove the filter that would be installed.
+.TP
+.B \-\-session\-scope \fIscope\fR
+Exercise the session-gated filter variant (form
+.IR session-N.scope ).
+.SS security-status
+.B ferrokeyd security-status
+\fB\-\-pid\fR \fIpid\fR
+.PP
+Read-only diagnostics of a running broker: print the Uid/Gid, capability
+sets, seccomp mode and NO_NEW_PRIVS of the given pid (typically the serve
+process). Intended for verifying the freeze externally.
+.SH CONFIGURATION
+The security-boundary configuration is
+.BR ferrokeyd.yaml (5),
+normally at
+.IR /etc/ferrokey/ferrokeyd.yaml .
+It must be root-owned and not group/world-writable when the supervisor runs
+privileged.
+.SH ENVIRONMENT
+.TP
+.B RUST_LOG
+Log filter for the runtime logs (e.g.
+.RB info ,
+.RB "ferrokeyd=trace" ).
+.TP
+.B XDG_RUNTIME_DIR
+Used only by the UI; the broker socket path comes from the config.
+.SH FILES
+.TP
+.I /etc/ferrokey/ferrokeyd.yaml
+Security-boundary configuration (root-owned, mode 0644).
+.TP
+.I /run/ferrokeyd/ferrokeyd.sock
+Default broker socket.
+.TP
+.I /dev/uinput
+The kernel interface the bootstrap opens.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Configuration, device, sandbox, or runtime failure. The serve child exits
+non-zero if the freeze fails (fail-closed).
+.SH DIAGNOSTICS
+On startup the supervisor logs the freeze report (euid/egid, capability
+sets, NO_NEW_PRIVS, seccomp, FD list) and the enforcement probe report.
+.B sandbox-probe
+prints the same probe report to stdout for offline proof.
+.B security-status
+prints the /proc status of the serve pid.
+.SH EXAMPLES
+Run the broker from the packaged config:
+.nf
+    ferrokeyd start \-\-config /etc/ferrokey/ferrokeyd.yaml
+.fi
+Prove the sandbox that would be installed (with session binding):
+.nf
+    ferrokeyd sandbox-probe \-\-session\-scope session-2.scope
+.fi
+Verify a running broker's freeze externally:
+.nf
+    ferrokeyd security-status \-\-pid $(pgrep \-f 'proc/self/exe serve')
+.fi
+.SH SEE ALSO
+.BR ferrokeyd.yaml (5),
+.BR ferrokey (1),
+.BR ferrokey.yaml (5)

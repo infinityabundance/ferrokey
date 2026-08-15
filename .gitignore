@@ -25,3 +25,6 @@ testing/vm/overlays/*.qcow2
 # Runtime state
 *.log
 ferrokeyd.sock
+
+# Generated man-page renderings (docs/man/out/ is produced by `cargo xtask man`)
+docs/man/out/

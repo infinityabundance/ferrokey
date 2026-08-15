@@ -223,6 +223,7 @@ rows = [
     ("build",    "Core unit tests",                          ["core.unit"]),
     ("build",    "Clean build from empty caches",            ["build.clean"]),
     ("docs",     "Architecture documentation drift court",   ["architecture"]),
+    ("docs",     "Man pages + CLI/config drift court",      ["man"]),
 ]
 
 def worst(results):

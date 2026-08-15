@@ -1,0 +1,16 @@
+[package]
+name = "xtask"
+description = "Ferrokey developer tooling: documentation generation (cargo xtask man) and verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+# A dev-only tool: never published to crates.io.
+publish = false
+
+[dependencies]
+# The man-page example verification parses the documented YAML through the
+# REAL configuration parsers (Phase 4 WS2, MAN.007) — no re-implementation.
+ferrokey = { path = ".." }
+ferrokeyd = { path = "../crates/ferrokeyd" }

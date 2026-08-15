@@ -1,0 +1,168 @@
+.TH FERROKEY.YAML 5 "August 2026" "Ferrokey" "Ferrokey Manual"
+.SH NAME
+ferrokey.yaml \- Ferrokey UI configuration
+.SH DESCRIPTION
+Configuration for the
+.BR ferrokey (1)
+on-screen keyboard UI. Every field is optional; missing fields fall back
+to the defaults below. The file is loaded from
+.IR /etc/ferrokey/ferrokey.yaml ,
+then
+.I $XDG_CONFIG_HOME/ferrokey/ferrokey.yaml
+(or
+.IR ~/.config/ferrokey/ferrokey.yaml ),
+or from an explicit
+.B \-\-config
+path.
+.PP
+Unlike the broker configuration
+.RB ( ferrokeyd.yaml (5)),
+this file is not a security boundary: the UI is fully unprivileged.
+.SH FIELDS
+.TP
+.B layout
+Type: string. Default: "us". The active layout: a builtin id
+.RB ( us ,
+.RB de ,
+.RB fr ,
+.RB gb ,
+.RB dvorak ,
+.RB us-intl ,
+...)
+or a system xkb spec
+.RB ( us(intl) ,
+.RB de@neo ,
+...).
+Validation: unknown ids and unloadable xkb specs abort startup with an
+error.
+.TP
+.B view
+Type: string. Default: "compact". The keyboard view:
+.BR compact " or " full .
+Views are visual arrangements over the same physical-key engine.
+Validation: unknown views abort startup.
+.TP
+.B socket_path
+Type: string (path). Default:
+.I $XDG_RUNTIME_DIR/ferrokeyd.sock
+(or
+.IR /tmp/ferrokeyd.sock ).
+The broker socket the UI connects to.
+.TP
+.B width ", " height
+Type: integer (px). Defaults: 920, 342. Initial OSK size. Validation: must
+be > 0.
+.TP
+.B x11_display
+Type: string or null. Default: null. Override the X11 display for the
+x11-no-input backend (mainly for tests); null = auto-detect from
+.BR DISPLAY .
+.TP
+.B sticky
+Type: map. Sticky/locked modifier behaviour.
+.RS
+.TP
+.B sticky.latch_enabled
+bool, default true: quick taps latch the modifier for the next qualifying
+key.
+.TP
+.B sticky.lock_enabled
+bool, default true: double-taps lock the modifier (Shift double-tap = Caps
+Lock).
+.TP
+.B sticky.tap_timeout_ms
+integer, default 400: maximum press duration for a release to count as a
+tap.
+.TP
+.B sticky.double_tap_timeout_ms
+integer, default 500: window within which two modifier taps count as a
+double-tap.
+.RE
+.TP
+.B repeat
+Type: map. Autorepeat behaviour.
+.RS
+.TP
+.B repeat.enabled
+bool, default true: enable autorepeat.
+.TP
+.B repeat.delay_ms
+integer, default 500: delay before repeating.
+.TP
+.B repeat.cadence_ms
+integer, default 30: interval between repeats.
+.RE
+.TP
+.B force_degraded_banner
+Type: bool. Default: false. Show the degraded-mode banner even when the
+selected backend preserves focus (diagnostics).
+.TP
+.B text_mode
+Type: bool. Default: false. Type characters through the compose/text engine
+instead of raw key events. Used by the courts to exercise the text path
+deterministically.
+.TP
+.B terminal
+Type: map. The embedded terminal workspace.
+.RS
+.TP
+.B terminal.enabled
+bool, default false: activate terminal mode (the
+.B \-\-terminal
+flag sets this).
+.TP
+.B terminal.pane_height
+integer px, default 420: terminal pane height.
+.TP
+.B terminal.font_size_px
+integer, default 16: terminal font size.
+.TP
+.B terminal.scrollback_lines
+integer, default: the engine's DEFAULT_SCROLLBACK: scrollback capacity in
+lines.
+.TP
+.B terminal.shell
+string or null, default null: the child program (null = $SHELL, then
+/bin/sh).
+.TP
+.B terminal.confirm_multiline_paste
+bool, default true: require confirmation before pasting multi-line content.
+.RE
+.TP
+.B destination
+Type: string. Default: "system". Initial input destination:
+.BR system
+(keys go to the broker) or
+.BR terminal
+(keys go to the PTY). The UI can switch destinations at runtime.
+.SH EXAMPLE
+.nf
+    layout: us
+    view: full
+    socket_path: /run/ferrokeyd/ferrokeyd.sock
+    width: 920
+    height: 342
+    sticky:
+      latch_enabled: true
+      lock_enabled: true
+      tap_timeout_ms: 400
+      double_tap_timeout_ms: 500
+    repeat:
+      enabled: true
+      delay_ms: 500
+      cadence_ms: 30
+    force_degraded_banner: false
+    text_mode: false
+    terminal:
+      enabled: false
+      pane_height: 420
+      font_size_px: 16
+      scrollback_lines: 1000
+      shell: null
+      confirm_multiline_paste: true
+    destination: system
+.fi
+.SH SEE ALSO
+.BR ferrokey (1),
+.BR ferrokeyd.yaml (5),
+.BR ferrokeyd (1)
