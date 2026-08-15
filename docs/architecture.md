@@ -31,6 +31,8 @@ and the window integration (surfaces) is replaceable.
 | `ferrokey-terminal` | embedded PTY terminal engine: bounded ANSI parser, grid, scrollback, key encoder, child lifecycle | terminal input never crosses the broker; parser is bounded | terminal-workspace (TERM.* incl. TUI), unit tests |
 | `ferrokey-uinput` | `/dev/uinput` virtual keyboard + held-key ledger | the only kernel interface; capability set immutable | uinput, kernel-security |
 | `ferrokeyd` | the constrained broker: supervisor, bootstrap, runtime sandbox | THE security boundary: non-root, zero caps, NO_NEW_PRIVS, seccomp, FD inventory | kernel-security, session-lifetime, device-lifetime, permissions, systemd, soak, mutation |
+| `ferrokey-proofs` | Kani model-checking harnesses over the **production** `ferrokey-core` state machine; never published | none (verification-only, `publish = false`) | kani-proofs (KANI.HELD.001 … KANI.SEQUENCE.001, KANI.MUTATION.001 — run in the `ferrokey-kani` VM) |
+| `xtask` | release tooling: `cargo xtask man` renders the troff man pages and validates their examples through the real config parsers | none (host-side tool) | man-drift (MAN.*) |
 
 ---
 
@@ -339,11 +341,15 @@ unregisters the uinput device when the fd closes (proven by
 
 | Claim | Implementation | Tests / court | Proof |
 |---|---|---|---|
-| Rollover is bounded: `held_count <= max_held_keys` | `KeyboardState::press` returns `Err(Rollover)` at the cap; `depressed` is a set | kernel-security, uinput, soak; unit tests | planned: `KANI.ROLLOVER.001` (WS3) |
-| `release_all` clears every physical hold and latched state; locks persist | `KeyboardState::release_all` | crash, device-lifetime (`SEC.STATE.SIGKILL`) | planned: `KANI.RELEASEALL.001` (WS3) |
-| A held key exists exactly once | `depressed: BTreeSet<PhysicalKey>`; duplicate `press` is a no-op | soak (chords), unit tests | planned: `KANI.HELD.001` (WS3) |
-| Latch is consumed by the next qualifying key press | `press` clears `latched` after injecting modifiers | modifiers, altgr | planned: `KANI.LATCH.001` (WS3) |
-| Lock only via the double-tap transition | `release` → `toggle_lock` on double-tap | modifiers, altgr | planned: `KANI.LOCK.001` (WS3) |
+| Rollover is bounded: `held_count <= max_held_keys` | `KeyboardState::press` returns `Err(Rollover)` at the cap; `depressed` is a fixed-capacity set | kernel-security, uinput, soak; unit tests | proved: `KANI.ROLLOVER.001` (WS3 receipt) |
+| `release_all` clears every physical hold and latched state; locks persist | `KeyboardState::release_all` | crash, device-lifetime (`SEC.STATE.SIGKILL`) | proved: `KANI.RELEASEALL.001` (WS3 receipt) |
+| A held key exists exactly once | `depressed: KeySet` (fixed-capacity sorted set); duplicate `press` is a no-op | soak (chords), unit tests | proved: `KANI.HELD.001` (WS3 receipt) |
+| Latch is consumed by the next qualifying key press | `press` clears `latched` after injecting modifiers | modifiers, altgr | proved: `KANI.LATCH.001` (WS3 receipt) |
+| Lock only via the double-tap transition | `release` → `toggle_lock` on double-tap | modifiers, altgr | proved: `KANI.LOCK.001` (WS3 receipt) |
+| Repeat never manufactures a held key | `RepeatEngine` fixed-capacity table; `tick` emits only tracked keys | repeat; unit tests | proved: `KANI.REPEAT.001` (WS3 receipt) |
+| Release of an unheld key cannot create state | `KeyboardState::release` early-returns on absent keys | repeat; unit tests | proved: `KANI.RELEASE.001` (WS3 receipt) |
+| Interleaved press/release/`release_all` sequences preserve the invariant set | `KeyboardState` ops over the fixed-capacity tables | soak (chords); unit tests | proved: `KANI.SEQUENCE.001` (WS3 receipt) |
+| The proofs detect the regressions they claim to guard | `proofs/run-negative-controls.sh` (mutated copies) | — | proved: `KANI.MUTATION.001` (WS3 receipt) |
 | Broker post-freeze cannot open devices/network/ioctl | `sandbox.rs` filter + probes | kernel-security (SEC.SECCOMP.*, SEC.NET.*), mutation | — |
 | Session binding refuses out-of-scope peers | `serve.rs authorize` + `session_scope.rs` | session-lifetime | — |
 | Backend selected by capability, not name | `ferrokey-surface::detect::decide` (pure) | backend-selection | — |

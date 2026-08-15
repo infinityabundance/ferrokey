@@ -21,6 +21,9 @@ pub enum ModifierKind {
 }
 
 impl ModifierKind {
+    /// The number of modifier kinds (the size of per-kind tables).
+    pub const COUNT: usize = 6;
+
     /// The preferred physical key used to emit this modifier.
     pub const fn preferred_key(self) -> PhysicalKey {
         match self {
@@ -30,6 +33,19 @@ impl ModifierKind {
             ModifierKind::AltGr => PhysicalKey::RightAlt,
             ModifierKind::Meta => PhysicalKey::LeftMeta,
             ModifierKind::Fn => PhysicalKey::Menu,
+        }
+    }
+
+    /// The 0-based index of this modifier — for fixed-size per-kind tables
+    /// (the state machine's `last_tap`), in declaration order.
+    pub const fn index(self) -> usize {
+        match self {
+            ModifierKind::Shift => 0,
+            ModifierKind::Ctrl => 1,
+            ModifierKind::Alt => 2,
+            ModifierKind::AltGr => 3,
+            ModifierKind::Meta => 4,
+            ModifierKind::Fn => 5,
         }
     }
 

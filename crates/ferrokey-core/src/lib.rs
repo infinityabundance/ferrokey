@@ -14,10 +14,12 @@
 pub mod action;
 pub mod compose;
 pub mod key;
+pub mod keyset;
 pub mod layout;
 pub mod modifier;
 pub mod repeat;
 pub mod state;
+pub mod time;
 
 pub use action::{
     DriverError, InputRequest, KeyAction, KeySink, KeyboardDriver, SinkError, TextError, TextSink,
@@ -29,3 +31,4 @@ pub use layout::{DeadKey, KeyDefinition, KeySymbol, Layout};
 pub use modifier::{ModifierKind, ModifierSet};
 pub use repeat::{RepeatEngine, RepeatSettings};
 pub use state::{KeyEvent, KeyboardState, Layer, StateError, StateSettings, TAP_GRACE};
+pub use time::Moment;

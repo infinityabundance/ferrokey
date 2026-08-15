@@ -15,8 +15,8 @@ use crate::key::PhysicalKey;
 use crate::layout::Layout;
 use crate::repeat::RepeatEngine;
 use crate::state::{KeyEvent, KeyboardState, StateError, StateSettings};
+use crate::time::Moment;
 use std::sync::Arc;
-use std::time::Instant;
 
 /// A key the UI can address.
 ///
@@ -167,7 +167,7 @@ impl KeyboardDriver {
         &mut self,
         action: KeyAction,
         key: VirtualKey,
-        now: Instant,
+        now: Moment,
     ) -> Result<(), DriverError> {
         let VirtualKey::Physical(key) = key;
         let events = match action {
@@ -198,7 +198,7 @@ impl KeyboardDriver {
     }
 
     /// Advance the repeat engine; emits re-presses for held repeatable keys.
-    pub fn tick_repeat(&mut self, now: Instant) -> Result<(), DriverError> {
+    pub fn tick_repeat(&mut self, now: Moment) -> Result<(), DriverError> {
         let due = self.repeat.tick(now);
         for key in due {
             // Kernel autorepeat semantics: value=2 events, not repeated
@@ -312,7 +312,7 @@ mod tests {
         let recorder = std::rc::Rc::new(Recorder::default());
         let sink: Box<dyn KeySink> = Box::new(recorder.clone());
         let mut d = driver(sink);
-        let now = Instant::now();
+        let now = Moment::from_millis(1_000_000);
         d.handle_action(KeyAction::Tap, VirtualKey::Physical(PhysicalKey::A), now)
             .unwrap();
         let events = recorder.events.borrow().clone();
@@ -331,7 +331,7 @@ mod tests {
         let recorder = std::rc::Rc::new(Recorder::default());
         let sink: Box<dyn KeySink> = Box::new(recorder.clone());
         let mut d = driver(sink);
-        let now = Instant::now();
+        let now = Moment::from_millis(1_000_000);
         d.handle_action(KeyAction::Down, VirtualKey::Physical(PhysicalKey::A), now)
             .unwrap();
         // Repeat fires after the delay — as an autorepeat (value=2) event,
@@ -369,7 +369,7 @@ mod tests {
         let recorder = std::rc::Rc::new(Recorder::default());
         let sink: Box<dyn KeySink> = Box::new(recorder.clone());
         let mut d = driver(sink);
-        let now = Instant::now();
+        let now = Moment::from_millis(1_000_000);
         // Tap shift (fast press+release).
         d.handle_action(
             KeyAction::Down,
@@ -416,7 +416,7 @@ mod tests {
         let recorder = std::rc::Rc::new(Recorder::default());
         let sink: Box<dyn KeySink> = Box::new(recorder.clone());
         let mut d = driver(sink);
-        let now = Instant::now();
+        let now = Moment::from_millis(1_000_000);
         d.handle_action(
             KeyAction::Down,
             VirtualKey::Physical(PhysicalKey::LeftCtrl),
@@ -448,7 +448,7 @@ mod tests {
         let recorder = std::rc::Rc::new(Recorder::default());
         let sink: Box<dyn KeySink> = Box::new(recorder.clone());
         let mut d = driver(sink);
-        let now = Instant::now();
+        let now = Moment::from_millis(1_000_000);
         d.handle_action(KeyAction::Down, VirtualKey::Physical(PhysicalKey::A), now)
             .unwrap();
         d.handle_action(

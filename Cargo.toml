@@ -80,6 +80,7 @@ members = [
     "crates/ferrokey-terminal",
     "crates/ferrokeyd",
     "xtask",
+    "proofs",
 ]
 
 [workspace.package]

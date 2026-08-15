@@ -156,15 +156,46 @@ still be caught on exactly the expected gate.
 `proofs/` holds the harnesses. Each proof has an id (`KANI.<FAMILY>.<NNN>`),
 a harness that invokes production `ferrokey-core` code, an invariant
 assertion, and a **negative control** proving the harness catches an
-intentional regression. Run:
+intentional regression.
+
+The verification runs **entirely inside the `ferrokey-kani` container** —
+never on the host (rule: no test tooling on the host):
 
 ```sh
-cargo kani --harness kani_rollover_held_bound   # (from proofs/)
+bash proofs/run-proofs.sh              # all harnesses → proofs/kani-receipt.json
+bash proofs/run-negative-controls.sh   # mutated copies must FAIL → proofs/kani-mutation-receipt.json
 ```
 
-All proofs must pass and must be listed in the machine-readable receipt
-(`proofs/kani-receipt.json`) — the receipt feeds the Phase 4 seal and the
-architecture drift court.
+While developing a harness you can target one harness inside the container
+(see `run-proofs.sh` for the exact invocation and the OOM guardrails —
+`KANI_MEM_LIMIT`, `KANI_HARNESS_TIMEOUT`, and the tmpfs headroom preflight):
+
+```sh
+cargo kani -p ferrokey-proofs --harness kani_rollover_held_bound \
+    -Z unstable-options --harness-timeout 45m \
+    --cbmc-args --unwind 33 --unwinding-assertions
+```
+
+Proof conventions:
+
+- Every loop in the verified path must have a **constant trip bound**
+  (≤ `MAX_HELD_KEYS` = 32). Iterating a collection through an iterator
+  adapter (`.iter().filter().count()`, `for k in set.iter()`, `.any()` over
+  a `Vec`) makes CBMC's formula explode — use the flat scan primitives
+  (`KeySet::copy_into`, `count_of`, `has_duplicates`, `contains_held`) and
+  index-based access instead. `--unwinding-assertions` turns any overlooked
+  loop into a loud proof failure rather than silent truncation.
+- Symbolic time must sample every region of the tap/latch/lock thresholds
+  (the `{0ms, 900ms}` domain) instead of a broad `u64` range — the
+  implementation only distinguishes `duration < 400ms` vs `≥`, and
+  `< 500ms` vs `≥`, so the small domain is semantically exhaustive.
+- Keep the symbolic key universe small (`sequence_key`, `small_key`);
+  multi-step symbolic state accumulation is the solver's main cost.
+
+All proofs must pass and must be listed in the machine-readable receipts
+(`proofs/kani-receipt.json` and `proofs/kani-mutation-receipt.json`) — the
+receipts feed the Phase 4 seal, CI, and the architecture drift court. A
+failed proof is a CI failure (no warning-only proof suite).
 
 ### Adding an adaptive-geometry invariant
 

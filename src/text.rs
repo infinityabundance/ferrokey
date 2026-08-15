@@ -16,7 +16,6 @@ use ferrokey_core::{
     TextError, VirtualKey,
 };
 use std::sync::Arc;
-use std::time::Instant;
 
 /// What the caller should do after a text-mode key press.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,7 +139,7 @@ pub fn type_text<F>(
 where
     F: FnMut(char) -> Option<(PhysicalKey, ModifierSet)>,
 {
-    let now = Instant::now();
+    let now = crate::now_moment();
     for c in text.chars() {
         let (key, extra) = resolve(c).ok_or(TextError::Unmappable(c))?;
         // Engage the required modifiers (in a deterministic order).
@@ -245,7 +244,7 @@ mod tests {
         let layout = us_layout();
         let mut driver = driver_with(&events, layout.clone());
         let mut composer = TextComposer::new(layout.clone());
-        let now = Instant::now();
+        let now = crate::now_moment();
         // Latch shift through the real keyboard path (quick tap), exactly like
         // a user clicking the OSK shift key.
         driver

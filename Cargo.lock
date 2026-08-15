@@ -1120,6 +1120,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrokey-proofs"
+version = "0.1.2"
+dependencies = [
+ "ferrokey-core",
+]
+
+[[package]]
 name = "ferrokey-protocol"
 version = "0.1.2"
 dependencies = [

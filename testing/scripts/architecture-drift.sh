@@ -52,18 +52,18 @@ MEMBER_CRATES=$(cargo metadata --no-deps --format-version 1 2>/dev/null |
     python3 -c 'import json,sys; [print(p["name"]) for p in json.load(sys.stdin)["packages"]]' | sort -u)
 MISSING=()
 for c in $DOC_CRATES; do
-    # The umbrella (`ferrokey`) has no crates/ dir; everything else must.
-    if [ "$c" = ferrokey ]; then
-        [ -f "$REPO_ROOT/Cargo.toml" ] || MISSING+=("$c")
-    else
-        [ -f "$CRATES/$c/Cargo.toml" ] || MISSING+=("$c")
-    fi
+    case "$c" in
+        ferrokey) [ -f "$REPO_ROOT/Cargo.toml" ] || MISSING+=("$c") ;;
+        ferrokey-proofs) [ -f "$REPO_ROOT/proofs/Cargo.toml" ] || MISSING+=("$c") ;;
+        xtask) [ -f "$REPO_ROOT/xtask/Cargo.toml" ] || MISSING+=("$c") ;;
+        *) [ -f "$CRATES/$c/Cargo.toml" ] || MISSING+=("$c") ;;
+    esac
 done
 UN_DOCUMENTED=()
 for c in $MEMBER_CRATES; do
-    case "$c" in ferrokey|ferrokey-core|ferrokey-layouts|ferrokey-protocol|ferrokey-surface|ferrokey-terminal|ferrokey-uinput|ferrokeyd) ;; *)
+    case "$c" in ferrokey|ferrokey-core|ferrokey-layouts|ferrokey-protocol|ferrokey-surface|ferrokey-terminal|ferrokey-uinput|ferrokeyd|ferrokey-proofs|xtask) ;; *)
         UN_DOCUMENTED+=("$c") ;; esac
-done
+ done
 if [ ${#MISSING[@]} -eq 0 ] && [ ${#UN_DOCUMENTED[@]} -eq 0 ]; then
     gate ARCH.DOCS.001 "crate map accurate" PASS "$(echo "$DOC_CRATES" | tr '\n' ' ')"
 else
@@ -141,18 +141,18 @@ for d in "$COURTS"/*/; do
 done
 PROOF_ISSUES=()
 PROOFS_MANIFEST="$REPO_ROOT/proofs/kani-receipt.json"
+MUTATION_MANIFEST="$REPO_ROOT/proofs/kani-mutation-receipt.json"
 KANI_IDS=$(grep -oE 'KANI\.[A-Z0-9.]+' "$DOC" | sort -u)
-if [ -f "$PROOFS_MANIFEST" ]; then
-    for k in $KANI_IDS; do
-        grep -q "\"$k\"" "$PROOFS_MANIFEST" || PROOF_ISSUES+=("$k")
-    done
-else
-    # No manifest yet (WS3 pending): every referenced proof must be marked
-    # as planned, never asserted as done.
-    for k in $KANI_IDS; do
-        grep -q "planned: .*$k" "$DOC" || PROOF_ISSUES+=("$k (not marked planned)")
-    done
-fi
+for k in $KANI_IDS; do
+    found=0
+    if [ -f "$PROOFS_MANIFEST" ] && grep -q "\"$k\"" "$PROOFS_MANIFEST"; then
+        found=1
+    fi
+    if [ -f "$MUTATION_MANIFEST" ] && grep -q "\"$k\"" "$MUTATION_MANIFEST"; then
+        found=1
+    fi
+    [ "$found" -eq 0 ] && PROOF_ISSUES+=("$k")
+done
 if [ ${#BAD_COURTS[@]} -eq 0 ] && [ ${#UNREFERENCED[@]} -eq 0 ] && [ ${#PROOF_ISSUES[@]} -eq 0 ]; then
     gate ARCH.DOCS.005 "evidence traceability" PASS "court/proof references resolve"
 else

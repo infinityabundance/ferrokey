@@ -42,10 +42,20 @@ use input::{Destination, InputRouter};
 use slint::{Image, ModelRc};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 slint::include_modules!();
+
+/// The single monotonic epoch for the keyboard engine's time input: captured
+/// once at process start, so every `Moment` across modules shares one clock
+/// (mixed epochs would corrupt tap/latch timing).
+static STARTED: OnceLock<Instant> = OnceLock::new();
+
+/// The current engine time (`ferrokey-core`'s deterministic `Moment`).
+pub(crate) fn now_moment() -> ferrokey_core::Moment {
+    ferrokey_core::Moment::from_elapsed(*STARTED.get_or_init(Instant::now))
+}
 
 fn main() -> anyhow::Result<()> {
     init_logging();
@@ -579,7 +589,7 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
         }
 
         // 4. Key repeat cadence.
-        if let Err(e) = driver.borrow_mut().tick_repeat(Instant::now()) {
+        if let Err(e) = driver.borrow_mut().tick_repeat(now_moment()) {
             log::warn!("repeat tick failed: {e}");
         }
 
@@ -724,7 +734,7 @@ fn handle_key(
     let result =
         driver
             .borrow_mut()
-            .handle_action(action, VirtualKey::Physical(physical), Instant::now());
+            .handle_action(action, VirtualKey::Physical(physical), now_moment());
     match result {
         Ok(()) => {
             // If the daemon link dropped mid-key, release locally so the

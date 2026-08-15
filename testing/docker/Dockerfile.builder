@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         libxkbcommon-dev \
         xkb-data \
+        groff \
     && rm -rf /var/lib/apt/lists/*
 
 # Sanitize the environment inside the court: no host display/session leakage.

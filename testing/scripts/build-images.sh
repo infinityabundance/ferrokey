@@ -23,4 +23,7 @@ echo "==> building $ORACLE_IMAGE (vm oracle, network=$NETWORK)"
 echo "==> building $TARGETS_IMAGE (court targets, network=$NETWORK)"
 "$DOCKER" build $CACHE_FLAG --network "$NETWORK" -t "$TARGETS_IMAGE" -f docker/Dockerfile.targets docker/
 
+echo "==> building $KANI_IMAGE (kani proofs, network=$NETWORK)"
+"$DOCKER" build $CACHE_FLAG --network "$NETWORK" -t "$KANI_IMAGE" -f docker/Dockerfile.kani docker/
+
 echo "court images built"

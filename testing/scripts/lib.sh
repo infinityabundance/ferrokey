@@ -18,6 +18,7 @@ KVM_DEVICE="${KVM_DEVICE:-/dev/kvm}"
 BUILDER_IMAGE="${BUILDER_IMAGE:-ferrokey-builder:latest}"
 ORACLE_IMAGE="${ORACLE_IMAGE:-ferrokey-oracle:latest}"
 TARGETS_IMAGE="${TARGETS_IMAGE:-ferrokey-targets:latest}"
+KANI_IMAGE="${KANI_IMAGE:-ferrokey-kani:latest}"
 
 mkdir -p "$RUN_DIR"/{courts,logs,devices,screenshots}
 

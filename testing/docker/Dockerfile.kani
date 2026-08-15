@@ -1,0 +1,20 @@
+# The Ferrokey Kani verification image (Phase 4 WS3).
+#
+# Contains the Kani model checker with its bundled rustc toolchain + CBMC,
+# baked in at build time (cargo kani setup). The proof runner executes the
+# verification entirely inside this container — never on the host — exactly
+# like the other courts. The production workspace is mounted read-only; the
+# verification itself runs in a disposable copy inside the container (the
+# kani toolchain bundles rustc 1.93-nightly, below the workspace MSRV
+# declaration, so the disposable copy adjusts only that declaration — the
+# verified code is byte-identical).
+
+FROM ferrokey-builder:latest
+
+# Kani + its bundled toolchain + CBMC. This is a one-time ~1-2 GB install
+# baked into the image layer; the verification runs are then fast.
+RUN cargo install kani-verifier --locked \
+    && cargo kani setup
+
+# The proof runner entrypoint (repo path is /repo, read-only).
+WORKDIR /repo

@@ -1,0 +1,20 @@
+[package]
+name = "ferrokey-proofs"
+description = "Kani model-checking harnesses over the PRODUCTION ferrokey-core keyboard state machine (Phase 4 WS3)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+# A proof-only crate: never published.
+publish = false
+
+[dependencies]
+# The proofs exercise the real production state machine — no toy model.
+ferrokey-core = { path = "../crates/ferrokey-core" }
+
+[features]
+# Compile the negative-control (deliberately regressed) harnesses. These
+# are expected to FAIL: run them via proofs/run-negative-controls.sh against
+# the mutated copies, never in the passing suite.
+mutation-checks = []

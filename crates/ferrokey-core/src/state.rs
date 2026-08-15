@@ -9,18 +9,24 @@
 //! * active layer resolution (Base / Shift / AltGr / Fn)
 //!
 //! The machine is deliberately **pure and deterministic**: every mutating
-//! method takes an explicit `now: Instant` so tests can drive time exactly
+//! method takes an explicit `now: Moment` so tests can drive time exactly
 //! and reproduce any sequence.
 
 use crate::key::PhysicalKey;
+use crate::keyset::{KeySet, MAX_HELD_KEYS};
 use crate::modifier::{ModifierKind, ModifierSet};
-use std::collections::{BTreeMap, BTreeSet};
-use std::time::{Duration, Instant};
+use crate::time::Moment;
+use std::time::Duration;
 
 /// The virtual press duration used when the UI reports an explicit `Tap`.
 /// Chosen well below the default [`StateSettings::tap_timeout`] so a tap is
 /// always recognised as a tap.
 pub const TAP_GRACE: Duration = Duration::from_millis(20);
+
+/// The maximum number of physical modifier keys Ferrokey injects for one
+/// pressed key (one per modifier kind) — the per-entry capacity of
+/// [`KeyboardState::injected_mods`].
+const MAX_INJECTED_MODS: usize = ModifierKind::COUNT;
 
 /// A single key event the state machine decides to emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,10 +106,34 @@ impl Default for StateSettings {
 
 #[derive(Debug, Clone, Copy)]
 struct TapTrack {
-    down_at: Instant,
+    down_at: Moment,
     /// Set when a non-modifier key was pressed while this modifier was held:
     /// the release is then a chord release, never a tap.
     interleaved: bool,
+}
+
+/// The physical modifier keys injected for one pressed key (latch/lock
+/// consumption). At most one per modifier kind — `ModifierKind::COUNT`.
+#[derive(Debug, Clone, Copy)]
+struct InjectedMods {
+    keys: [PhysicalKey; MAX_INJECTED_MODS],
+    len: usize,
+}
+
+impl InjectedMods {
+    const fn new() -> Self {
+        InjectedMods {
+            keys: [PhysicalKey::Escape; MAX_INJECTED_MODS],
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, key: PhysicalKey) {
+        if self.len < MAX_INJECTED_MODS {
+            self.keys[self.len] = key;
+            self.len += 1;
+        }
+    }
 }
 
 /// The full keyboard state.
@@ -111,10 +141,16 @@ struct TapTrack {
 /// `caps_lock` / `num_lock` are the canonical lock flags; the `Shift` bit of
 /// `locked` mirrors `caps_lock` so symbol resolution can use the modifier set
 /// directly. A debug assertion keeps the two views consistent.
+///
+/// All collections are fixed-capacity / linear (see `keyset`): bounded by the
+/// hard rollover cap, allocation-free in the hot path, and model-checkable.
+/// Every scan is a constant-bound loop over the fixed arrays (slots at/after
+/// the tracked length are `None` and skipped), so CBMC derives exact trip
+/// bounds instead of unrolling a symbolic length.
 #[derive(Debug, Clone)]
 pub struct KeyboardState {
     settings: StateSettings,
-    depressed: BTreeSet<PhysicalKey>,
+    depressed: KeySet,
     latched: ModifierSet,
     locked: ModifierSet,
     caps_lock: bool,
@@ -122,30 +158,34 @@ pub struct KeyboardState {
     active_layer: Layer,
     /// Modifier physical keys injected on behalf of a pressed key (latch/lock
     /// consumption). Keyed by the non-modifier key they were injected for.
-    injected_mods: BTreeMap<PhysicalKey, Vec<PhysicalKey>>,
-    tap_track: BTreeMap<PhysicalKey, TapTrack>,
-    last_tap: BTreeMap<ModifierKind, Instant>,
+    injected_mods: [Option<(PhysicalKey, InjectedMods)>; MAX_HELD_KEYS],
+    injected_mods_len: usize,
+    tap_track: [Option<(PhysicalKey, TapTrack)>; MAX_HELD_KEYS],
+    tap_track_len: usize,
+    last_tap: [Option<Moment>; ModifierKind::COUNT],
 }
 
 impl KeyboardState {
     pub fn new(settings: StateSettings) -> Self {
         KeyboardState {
             settings,
-            depressed: BTreeSet::new(),
+            depressed: KeySet::new(),
             latched: ModifierSet::empty(),
             locked: ModifierSet::empty(),
             caps_lock: false,
             num_lock: false,
             active_layer: Layer::Base,
-            injected_mods: BTreeMap::new(),
-            tap_track: BTreeMap::new(),
-            last_tap: BTreeMap::new(),
+            injected_mods: [None; MAX_HELD_KEYS],
+            injected_mods_len: 0,
+            tap_track: [None; MAX_HELD_KEYS],
+            tap_track_len: 0,
+            last_tap: [None; ModifierKind::COUNT],
         }
     }
 
     // ── Accessors ────────────────────────────────────────────────────────
 
-    pub fn depressed(&self) -> &BTreeSet<PhysicalKey> {
+    pub fn depressed(&self) -> &KeySet {
         &self.depressed
     }
 
@@ -170,16 +210,22 @@ impl KeyboardState {
     }
 
     pub fn is_depressed(&self, key: PhysicalKey) -> bool {
-        self.depressed.contains(&key)
+        self.depressed.contains(key)
     }
 
     /// Modifiers currently physically held down.
     pub fn held_modifiers(&self) -> ModifierSet {
         let mut mods = ModifierSet::empty();
-        for &key in &self.depressed {
-            if let Some(kind) = key.modifier_kind() {
-                mods.insert(kind.into());
+        let mut keys = [PhysicalKey::Escape; MAX_HELD_KEYS];
+        let n = self.depressed.copy_into(&mut keys);
+        let mut i = 0;
+        while i < MAX_HELD_KEYS {
+            if i < n {
+                if let Some(kind) = keys[i].modifier_kind() {
+                    mods.insert(kind.into());
+                }
             }
+            i += 1;
         }
         mods
     }
@@ -200,8 +246,8 @@ impl KeyboardState {
     // ── Mutating operations ─────────────────────────────────────────────
 
     /// Press a key. Returns the events to deliver to the sink, in order.
-    pub fn press(&mut self, key: PhysicalKey, now: Instant) -> Result<Vec<KeyEvent>, StateError> {
-        if self.depressed.contains(&key) {
+    pub fn press(&mut self, key: PhysicalKey, now: Moment) -> Result<Vec<KeyEvent>, StateError> {
+        if self.depressed.contains(key) {
             return Ok(Vec::new());
         }
         if self.depressed.len() >= self.settings.max_held_keys {
@@ -216,19 +262,24 @@ impl KeyboardState {
             // Pressing a modifier while any other modifier is held is a chord:
             // its release must not count as a tap.
             let chord = {
+                let mut keys = [PhysicalKey::Escape; MAX_HELD_KEYS];
+                let n = self.depressed.copy_into(&mut keys);
                 let mut others_held = false;
-                for &held in &self.depressed {
-                    if let Some(h) = held.modifier_kind() {
-                        if h != kind {
-                            others_held = true;
-                            break;
+                let mut i = 0;
+                while i < MAX_HELD_KEYS {
+                    if i < n {
+                        if let Some(h) = keys[i].modifier_kind() {
+                            if h != kind {
+                                others_held = true;
+                            }
                         }
                     }
+                    i += 1;
                 }
                 others_held
             };
             self.depressed.insert(key);
-            self.tap_track.insert(
+            self.tap_track_push(
                 key,
                 TapTrack {
                     down_at: now,
@@ -245,7 +296,8 @@ impl KeyboardState {
             // (held ∪ latched ∪ locked), injecting the physical modifier keys
             // that are not already down.
             let effective = self.effective_modifiers();
-            let mut injected = Vec::new();
+            let held_mods = self.held_modifiers();
+            let mut injected = InjectedMods::new();
             for kind in [
                 ModifierKind::Shift,
                 ModifierKind::Ctrl,
@@ -254,28 +306,33 @@ impl KeyboardState {
                 ModifierKind::Meta,
                 ModifierKind::Fn,
             ] {
-                if effective.contains(kind.into()) && !self.physically_down(kind) {
+                if effective.contains(kind.into()) && !held_mods.contains(kind.into()) {
                     let phys = kind.preferred_key();
-                    if !self.depressed.contains(&phys) {
+                    if !self.depressed.contains(phys) {
                         self.depressed.insert(phys);
                         injected.push(phys);
                         events.push(KeyEvent::Down(phys));
                     }
                 }
             }
-            if !injected.is_empty() {
-                self.injected_mods.insert(key, injected);
+            if injected.len > 0 {
+                self.injected_mods_push(key, injected);
             }
             self.depressed.insert(key);
             events.push(KeyEvent::Down(key));
             // The latch is consumed by the first key pressed after it.
             self.latched = ModifierSet::empty();
             // Any modifier still held now becomes part of a chord, so its
-            // release must not count as a tap.
-            for &held in &self.depressed {
-                if let Some(track) = self.tap_track.get_mut(&held) {
-                    track.interleaved = true;
+            // release must not count as a tap. Every tap-track entry belongs
+            // to a currently held modifier (tracks are created at press and
+            // removed at release), so marking them all is exactly the
+            // interleave rule — one flat pass, no per-key lookup nesting.
+            let mut i = 0;
+            while i < MAX_HELD_KEYS {
+                if let Some((_, t)) = &mut self.tap_track[i] {
+                    t.interleaved = true;
                 }
+                i += 1;
             }
         }
 
@@ -284,43 +341,44 @@ impl KeyboardState {
     }
 
     /// Release a key. Returns the events to deliver to the sink, in order.
-    pub fn release(&mut self, key: PhysicalKey, now: Instant) -> Result<Vec<KeyEvent>, StateError> {
-        if !self.depressed.contains(&key) {
+    pub fn release(&mut self, key: PhysicalKey, now: Moment) -> Result<Vec<KeyEvent>, StateError> {
+        if !self.depressed.contains(key) {
             return Ok(Vec::new());
         }
 
         let mut events = Vec::new();
 
         if let Some(kind) = key.modifier_kind() {
-            let track = self.tap_track.remove(&key);
+            let track = self.tap_track_remove(key);
             events.push(KeyEvent::Up(key));
-            self.depressed.remove(&key);
+            self.depressed.remove(key);
 
             let is_tap = match track {
                 Some(t) => {
-                    !t.interleaved && now.duration_since(t.down_at) < self.settings.tap_timeout
+                    !t.interleaved
+                        && now.saturating_duration_since(t.down_at) < self.settings.tap_timeout
                 }
                 None => false,
             };
             if is_tap && self.settings.latch_enabled {
                 let double = self.settings.lock_enabled
-                    && self.last_tap.get(&kind).is_some_and(|last| {
-                        now.duration_since(*last) < self.settings.double_tap_timeout
+                    && self.last_tap[kind.index()].is_some_and(|last| {
+                        now.saturating_duration_since(last) < self.settings.double_tap_timeout
                     });
                 if double {
                     self.toggle_lock(kind);
                     self.latched.remove(kind.into());
-                    self.last_tap.remove(&kind);
+                    self.last_tap[kind.index()] = None;
                 } else {
                     self.latched.insert(kind.into());
-                    self.last_tap.insert(kind, now);
+                    self.last_tap[kind.index()] = Some(now);
                 }
             } else {
-                self.last_tap.remove(&kind);
+                self.last_tap[kind.index()] = None;
             }
         } else if key.is_lock_key() {
             events.push(KeyEvent::Up(key));
-            self.depressed.remove(&key);
+            self.depressed.remove(key);
             match key {
                 PhysicalKey::CapsLock => self.toggle_caps_lock(),
                 PhysicalKey::NumLock => self.num_lock = !self.num_lock,
@@ -328,13 +386,15 @@ impl KeyboardState {
             }
         } else {
             events.push(KeyEvent::Up(key));
-            self.depressed.remove(&key);
+            self.depressed.remove(key);
             // Release any modifier keys that were injected for this key.
-            if let Some(injected) = self.injected_mods.remove(&key) {
-                for phys in injected {
-                    if self.depressed.remove(&phys) {
-                        events.push(KeyEvent::Up(phys));
+            if let Some(injected) = self.injected_mods_remove(key) {
+                let mut i = 0;
+                while i < MAX_INJECTED_MODS {
+                    if i < injected.len && self.depressed.remove(injected.keys[i]) {
+                        events.push(KeyEvent::Up(injected.keys[i]));
                     }
+                    i += 1;
                 }
             }
         }
@@ -349,21 +409,30 @@ impl KeyboardState {
     /// state, like a physical keyboard's LEDs.
     pub fn release_all(&mut self) -> Vec<KeyEvent> {
         let mut events = Vec::new();
-        let keys: Vec<PhysicalKey> = self.depressed.iter().copied().collect();
-        // Release non-modifiers first, modifiers last.
-        for &key in keys.iter().rev() {
-            if !key.is_modifier() {
-                events.push(KeyEvent::Up(key));
+        let mut keys = [PhysicalKey::Escape; MAX_HELD_KEYS];
+        let n = self.depressed.copy_into(&mut keys);
+        // Release non-modifiers first, modifiers last (deterministic order).
+        let mut i = 0;
+        while i < MAX_HELD_KEYS {
+            let idx = MAX_HELD_KEYS - 1 - i;
+            if idx < n && !keys[idx].is_modifier() {
+                events.push(KeyEvent::Up(keys[idx]));
             }
+            i += 1;
         }
-        for &key in keys.iter().rev() {
-            if key.is_modifier() {
-                events.push(KeyEvent::Up(key));
+        let mut i = 0;
+        while i < MAX_HELD_KEYS {
+            let idx = MAX_HELD_KEYS - 1 - i;
+            if idx < n && keys[idx].is_modifier() {
+                events.push(KeyEvent::Up(keys[idx]));
             }
+            i += 1;
         }
         self.depressed.clear();
-        self.injected_mods.clear();
-        self.tap_track.clear();
+        self.injected_mods = [None; MAX_HELD_KEYS];
+        self.injected_mods_len = 0;
+        self.tap_track = [None; MAX_HELD_KEYS];
+        self.tap_track_len = 0;
         self.latched = ModifierSet::empty();
         self.update_layer();
         events
@@ -371,10 +440,87 @@ impl KeyboardState {
 
     // ── Internals ────────────────────────────────────────────────────────
 
-    fn physically_down(&self, kind: ModifierKind) -> bool {
-        self.depressed
-            .iter()
-            .any(|k| k.modifier_kind() == Some(kind))
+    // ── linear fixed-capacity table helpers (constant-bound, allocation-free)
+    //
+    // Slots at/after the tracked length are always `None`, so every scan is a
+    // constant-bound loop over the fixed array: CBMC derives the exact trip
+    // bound and stale slots are skipped by the `Option` pattern.
+
+    /// Append a tap-track entry (dropped at capacity — the state machine's
+    /// rollover guard prevents reaching it).
+    fn tap_track_push(&mut self, key: PhysicalKey, track: TapTrack) {
+        if self.tap_track_len < MAX_HELD_KEYS {
+            self.tap_track[self.tap_track_len] = Some((key, track));
+            self.tap_track_len += 1;
+        }
+    }
+
+    /// Find and remove the tap track for `key`, returning it if present.
+    fn tap_track_remove(&mut self, key: PhysicalKey) -> Option<TapTrack> {
+        let mut pos = None;
+        let mut i = 0;
+        while i < MAX_HELD_KEYS {
+            if let Some((k, _)) = self.tap_track[i] {
+                if k == key {
+                    pos = Some(i);
+                    break;
+                }
+            }
+            i += 1;
+        }
+        let pos = pos?;
+        let removed = self.tap_track[pos].unwrap().1;
+        // Shift the tail left, then clear the vacated slot (constant bound).
+        let mut k = 0;
+        while k < MAX_HELD_KEYS {
+            let j = k;
+            if j >= pos && j + 1 < self.tap_track_len {
+                self.tap_track[j] = self.tap_track[j + 1];
+            }
+            k += 1;
+        }
+        self.tap_track[self.tap_track_len - 1] = None;
+        self.tap_track_len -= 1;
+        Some(removed)
+    }
+
+    /// Find and remove the tap track for `key`, returning it if present.
+    /// Append an injected-modifier record (dropped at capacity — the rollover
+    /// guard prevents reaching it).
+    fn injected_mods_push(&mut self, key: PhysicalKey, injected: InjectedMods) {
+        if self.injected_mods_len < MAX_HELD_KEYS {
+            self.injected_mods[self.injected_mods_len] = Some((key, injected));
+            self.injected_mods_len += 1;
+        }
+    }
+
+    /// Remove and return the injected-modifier record for `key`, if any.
+    fn injected_mods_remove(&mut self, key: PhysicalKey) -> Option<InjectedMods> {
+        let mut pos = None;
+        let mut i = 0;
+        while i < MAX_HELD_KEYS {
+            if let Some((k, _)) = self.injected_mods[i] {
+                if k == key {
+                    pos = Some(i);
+                    break;
+                }
+            }
+            i += 1;
+        }
+        let pos = pos?;
+        let removed = self.injected_mods[pos].unwrap().1;
+        // Shift the tail left, then clear the vacated slot (constant bound).
+        let mut k = 0;
+        while k < MAX_HELD_KEYS {
+            let j = k;
+            if j >= pos && j + 1 < self.injected_mods_len {
+                self.injected_mods[j] = self.injected_mods[j + 1];
+            }
+            k += 1;
+        }
+        self.injected_mods[self.injected_mods_len - 1] = None;
+        self.injected_mods_len -= 1;
+        Some(removed)
     }
 
     fn toggle_caps_lock(&mut self) {
@@ -410,8 +556,8 @@ impl KeyboardState {
 mod tests {
     use super::*;
 
-    fn t0() -> Instant {
-        Instant::now()
+    fn t0() -> Moment {
+        Moment::from_millis(1_000_000)
     }
 
     fn settings() -> StateSettings {

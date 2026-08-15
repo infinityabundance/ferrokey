@@ -64,6 +64,11 @@ echo
  bash scripts/architecture-drift.sh
  bash scripts/man-drift.sh
 
+ echo
+ echo "── FORMAL VERIFICATION COURTS (WS3, Kani in the ferrokey-kani VM) ──"
+ bash proofs/run-proofs.sh
+ bash proofs/run-negative-controls.sh
+
 echo
  echo "── VM COURTS (X11 profile) ──"
  for court in kernel-security systemd soak socket-hijack cross-user device-lifetime uinput permissions x11 focus crash \

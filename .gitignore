@@ -28,3 +28,4 @@ ferrokeyd.sock
 
 # Generated man-page renderings (docs/man/out/ is produced by `cargo xtask man`)
 docs/man/out/
+.kani-work/
