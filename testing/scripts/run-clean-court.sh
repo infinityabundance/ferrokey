@@ -15,6 +15,9 @@ echo "==> clean build court (empty caches, network: DECLARED REQUIRED for crates
 # also runs under the suite's hard memory cap.
 CLEAN_TMP="$RUN_DIR/tmp/clean"
 mkdir -p "$CLEAN_TMP"/{registry,git,target}
+# Root-owned so the cap-dropped container root can write (OOM limits;
+# make_bind_writable in lib.sh).
+make_bind_writable "$CLEAN_TMP/registry" "$CLEAN_TMP/git" "$CLEAN_TMP/target"
 "$DOCKER" run --rm \
     $(mem_flags) \
     --network "${COURT_NETWORK:-bridge}" \

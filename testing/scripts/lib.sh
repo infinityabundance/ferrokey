@@ -83,6 +83,21 @@ require_headroom() {
 drop_image()   { "$DOCKER" rmi "$1" >/dev/null 2>&1 || true; }
 drop_volume()  { "$DOCKER" volume rm -f "$1" >/dev/null 2>&1 || true; }
 
+make_bind_writable() {
+    # The court containers run with --cap-drop ALL: container root has NO
+    # CAP_DAC_OVERRIDE, so it cannot write into a host-uid-owned bind dir (it
+    # only gets 'other' permissions). Docker named volumes are root-owned by
+    # construction; run-scoped bind dirs must get the same ownership. The
+    # chown runs inside an alpine container (the host is an orchestrator
+    # only). Non-recursive: the cap-dropped container root then owns the top
+    # level and creates everything below it as root.
+    local d
+    for d in "$@"; do
+        mkdir -p "$d"
+        "$DOCKER" run --rm -v "$d:/court/bind" alpine chown 0:0 /court/bind >/dev/null 2>&1 || true
+    done
+}
+
 # ---------------------------------------------------------------------------
 # Environment sanitization (rule 33): the court must never see the host GUI.
 # ---------------------------------------------------------------------------
@@ -206,7 +221,9 @@ run_in_builder() {
     # toolchain.
     local cache_dir="${CARGO_CACHE_DIR:-$RUN_DIR/tmp/workspace-registry}"
     local target_dir="${TARGET_CACHE_DIR:-$RUN_DIR/tmp/workspace-target}"
-    mkdir -p "$cache_dir" "$target_dir"
+    # Root-owned so the cap-dropped container root can write (see
+    # make_bind_writable).
+    make_bind_writable "$cache_dir" "$target_dir"
     "$DOCKER" run --rm \
         $(mem_flags) \
         --network "${COURT_NETWORK:-bridge}" \
