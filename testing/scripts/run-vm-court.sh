@@ -26,7 +26,12 @@ DISTRO="${3:-debian-12}"
 # disposable copy at the same path).
 PAYLOAD_TARGET_VOLUME="${PAYLOAD_TARGET_VOLUME:-$RUN_DIR/tmp/payload-target}"
 PAYLOAD_TARGETS_VOLUME="${PAYLOAD_TARGETS_VOLUME:-$RUN_DIR/tmp/payload-targets}"
-mkdir -p "$PAYLOAD_TARGET_VOLUME" "$PAYLOAD_TARGETS_VOLUME" 2>/dev/null || true
+# Bind-dir defaults are absolute paths (docker -v: a value with '/' is a bind
+# mount; without it, a volume name). Only mkdir for the path form — a volume
+# name must NOT become a stray host directory.
+case "$PAYLOAD_TARGET_VOLUME" in
+    /*) mkdir -p "$PAYLOAD_TARGET_VOLUME" "$PAYLOAD_TARGETS_VOLUME" ;;
+esac
 
 if [ ! -f "$REPO_ROOT/testing/courts/$COURT/court.sh" ]; then
     echo "no court script at testing/courts/$COURT/court.sh"
