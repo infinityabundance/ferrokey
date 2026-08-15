@@ -8,18 +8,17 @@ source scripts/lib.sh
 sanitize_env
 host_safety_preflight
 
-# Pre-warm the cargo cache from the host's downloaded crates (pure
-# performance optimization; the clean court proves cache-independence).
-"$DOCKER" volume create ferrokey-cargo-cache >/dev/null 2>&1 || true
-"$DOCKER" volume create ferrokey-target-cache >/dev/null 2>&1 || true
-
-# Cargo cache pre-warm: copy the host registry (downloads only — no test
-# runs on the host, nothing touches input devices or the desktop). The
-# copies are re-chmodded: the host registry contains owner-only (0640) files
-# that a different container uid could not read.
+# Pre-warm the run-scoped registry cache from the host's downloaded crates
+# (pure performance optimization; the clean court proves cache-independence).
+# The cache is a bind dir on the REAL disk (OOM limits: the tmpfs data-root
+# never holds it). The copy runs inside a container: the host is an
+# orchestrator only. The copies are re-chmodded: the host registry contains
+# owner-only (0640) files that a different container uid could not read.
+REGISTRY_DIR="$RUN_DIR/tmp/workspace-registry"
+mkdir -p "$REGISTRY_DIR"
 if [ -d "${HOME}/.cargo/registry" ]; then
     "$DOCKER" run --rm \
-        -v ferrokey-cargo-cache:/cache \
+        -v "$REGISTRY_DIR:/cache" \
         -v "${HOME}/.cargo/registry:/src/registry:ro" \
         alpine sh -c 'cp -a /src/registry/. /cache/ 2>/dev/null || true; find /cache -type d -exec chmod 755 {} + 2>/dev/null; find /cache -type f -exec chmod 644 {} + 2>/dev/null' >/dev/null 2>&1 || true
 fi

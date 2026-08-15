@@ -34,7 +34,7 @@ KANI_VERSION=$("$DOCKER" run --rm "$KANI_IMAGE" kani --version 2>/dev/null | awk
 KANI_MEM_LIMIT="${KANI_MEM_LIMIT:-48g}"
 
 if ! "$DOCKER" image inspect "$KANI_IMAGE" >/dev/null 2>&1; then
-    bash testing/scripts/build-images.sh
+    bash testing/scripts/build-images.sh kani
 fi
 
 echo "── running Kani negative controls (ferrokey-kani container) ──"

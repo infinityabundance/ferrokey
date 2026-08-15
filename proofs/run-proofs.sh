@@ -38,7 +38,7 @@ if [ -n "$DATA_ROOT_FREE" ] && [ "$DATA_ROOT_FREE" -lt 6291456 ]; then
 fi
 
 if ! "$DOCKER" image inspect "$KANI_IMAGE" >/dev/null 2>&1; then
-    bash testing/scripts/build-images.sh
+    bash testing/scripts/build-images.sh kani
 fi
 
 echo "── running Kani proofs (ferrokey-kani container, mem cap $KANI_MEM_LIMIT) ──"

@@ -8,12 +8,20 @@ source scripts/lib.sh
 sanitize_env
 
 echo "==> clean build court (empty caches, network: DECLARED REQUIRED for crates.io) =="
-"$DOCKER" volume rm -f ferrokey-clean-cargo ferrokey-clean-target >/dev/null 2>&1 || true
+# OOM limits: the clean-build caches are run-scoped bind dirs on the REAL
+# disk — fresh per run (identical "empty caches" semantics) and never on the
+# tmpfs data-root. Only the registry/git subdirs are mounted (never
+# CARGO_HOME): the image's cargo toolchain must stay visible. The container
+# also runs under the suite's hard memory cap.
+CLEAN_TMP="$RUN_DIR/tmp/clean"
+mkdir -p "$CLEAN_TMP"/{registry,git,target}
 "$DOCKER" run --rm \
+    $(mem_flags) \
     --network "${COURT_NETWORK:-bridge}" \
     -v "$REPO_ROOT:/repo:ro" \
-    -v ferrokey-clean-cargo:/usr/local/cargo \
-    -v ferrokey-clean-target:/repo/target \
+    -v "$CLEAN_TMP/registry:/usr/local/cargo/registry" \
+    -v "$CLEAN_TMP/git:/usr/local/cargo/git" \
+    -v "$CLEAN_TMP/target:/repo/target" \
     -e CARGO_HOME=/usr/local/cargo \
     -e CARGO_TARGET_DIR=/repo/target \
     -e CARGO_INCREMENTAL=0 \
@@ -32,5 +40,3 @@ else
     echo "BUILD COURT (clean) .......... FAIL"
     exit 1
 fi
-
-"$DOCKER" volume rm -f ferrokey-clean-cargo ferrokey-clean-target >/dev/null 2>&1 || true

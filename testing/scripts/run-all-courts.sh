@@ -3,13 +3,20 @@
 #
 #   ./testing/scripts/run-all-courts.sh
 #
-# preflight → purge VM scratch → build images → unit/build courts (Docker)
-# → clean-build court → VM courts (X11: kernel-security, systemd, soak,
-# uinput, permissions, x11, focus, crash, repeat, modifiers, layouts,
-# applications, dead-keys, text-mode, touch, altgr, full-desktop, sdl,
-# terminal; browsers: firefox, chromium, electron; Wayland: wayland,
+# preflight → purge VM scratch + legacy court caches → build images → unit/
+# build courts (Docker) → clean-build court → VM courts (X11: kernel-security,
+# systemd, soak, uinput, permissions, x11, focus, crash, repeat, modifiers,
+# layouts, applications, dead-keys, text-mode, touch, altgr, full-desktop,
+# sdl, terminal; browsers: firefox, chromium, electron; Wayland: wayland,
 # xwayland) → mutation courts (§93) → evidence pull → security seal (§90,
 # §91, §96) → evidence → compatibility receipt → postflight.
+#
+# OOM limits: the docker data-root is a 26G tmpfs. Heavy build outputs are
+# run-scoped bind dirs on the real disk (lib.sh run_in_builder, run-vm-court),
+# every court container runs under a hard memory cap, legacy caches are
+# dropped at the start, require_headroom() gates each heavy stage on
+# data-root headroom, and disposable images are dropped after their stage
+# (the kani image after WS3). See lib.sh's OOM-limits section.
 #
 # §94: failures propagate — a court FAIL aborts the suite non-zero (no
 # `|| true` masks a receipt), and run-court-inner.sh exits non-zero on a
@@ -42,8 +49,21 @@ echo "── PURGING VM STATE SCRATCH ──"
     'rm -rf /court/state/evidence /court/state/payload /court/state/overlays /court/state/seeds /court/state/keys /court/state/logs; mkdir -p /court/state/evidence' \
     || echo "WARNING: could not purge the VM state volume (disk headroom may be reduced)"
 
+# OOM limits (disk dimension): legacy court caches from PREVIOUS runs are
+# dropped so the tmpfs data-root starts at its smallest footprint. The
+# current suite no longer uses these (they were replaced by run-scoped bind
+# dirs on the real disk); dropping them also frees any residue the last
+# ENOSPC'd run left behind.
+echo
+echo "── DROPPING LEGACY COURT CACHES ──"
+for v in ferrokey-cargo-cache ferrokey-target-cache ferrokey-clean-cargo \
+         ferrokey-clean-target ferrokey-payload-target ferrokey-payload-targets; do
+    drop_volume "$v"
+done
+
 echo
 echo "── BUILDING COURT IMAGES ──"
+require_headroom "image builds" 4
 bash scripts/build-images.sh
 
 # The docker image build-cache (several GB on a fresh build) is only needed
@@ -56,10 +76,12 @@ echo "── PRUNING DOCKER BUILD CACHE ──"
 
 echo
 echo "── BUILD + CORE UNIT COURTS (Docker) ──"
+require_headroom "unit/build courts" 6
 bash scripts/run-unit-court.sh
 
 echo
  echo "── CLEAN BUILD COURT (empty caches) ──"
+ require_headroom "clean-build court" 4
  bash scripts/run-clean-court.sh
 
  echo
@@ -69,8 +91,16 @@ echo
 
  echo
  echo "── FORMAL VERIFICATION COURTS (WS3, Kani in the ferrokey-kani VM) ──"
+ require_headroom "formal verification (kani)" 6
  bash "$REPO_ROOT/proofs/run-proofs.sh"
  bash "$REPO_ROOT/proofs/run-negative-controls.sh"
+ # OOM limits: the kani image (≈2.7 GB, 15 min rebuild) is only needed by
+ # the proof harnesses; dropping it after WS3 keeps headroom for the VM
+ # courts' overlays. It is rebuilt on demand by run-proofs.sh if ever needed
+ # again.
+ echo
+ echo "── DROPPING KANI IMAGE (WS3 complete) ──"
+ drop_image "$KANI_IMAGE"
 
  echo
  echo "── ADAPTIVE GEOMETRY COURT (WS4) ──"
@@ -82,6 +112,7 @@ echo
 
 echo
  echo "── VM COURTS (X11 profile) ──"
+ require_headroom "vm courts (x11 profile)" 8
  for court in kernel-security systemd soak socket-hijack cross-user device-lifetime uinput permissions x11 focus crash \
     repeat modifiers layouts applications dead-keys text-mode touch altgr \
     full-desktop sdl terminal terminal-workspace session-lifetime backend-selection; do
@@ -102,17 +133,18 @@ fi
 
 echo
  echo "── SEC.COURT.MUTATION (§93) ──"
+ require_headroom "mutation courts" 6
  MUTATION_RUN_DIR="$RUN_DIR/mutations" bash scripts/run-mutation-courts.sh
 
-# The mutation builds repopulated the shared payload build-cache volumes.
-# The browsers/wayland courts rebuild them on demand; dropping the caches
-# now keeps the tmpfs-backed data-root from overflowing under the wayland
-# profile's ~6G overlay.
+# The mutation builds repopulated their dedicated payload volumes (and any
+# legacy shared volumes from previous runs still occupy the tmpfs data-root).
+# Dropping them now keeps the tmpfs-backed data-root from overflowing under
+# the wayland profile's ~6G overlay; the browsers/wayland courts rebuild on
+# demand.
 echo
  echo "── FREEING PAYLOAD BUILD CACHES ──"
+ drop_volume ferrokey-payload-target-mut ferrokey-payload-targets-mut
  "$DOCKER" volume rm ferrokey-payload-target ferrokey-payload-targets 2>/dev/null || true
- "$DOCKER" volume create ferrokey-payload-target >/dev/null 2>&1 || true
- "$DOCKER" volume create ferrokey-payload-targets >/dev/null 2>&1 || true
 
 echo
  echo "── VM COURTS (browsers appliance) ──"
@@ -126,6 +158,7 @@ echo
 
  echo
  echo "── VM COURTS (Wayland profile) ──"
+ require_headroom "vm courts (wayland profile)" 6
  for court in wayland xwayland; do
     echo
     echo "── VM court: $court ──"

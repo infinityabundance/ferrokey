@@ -57,6 +57,36 @@ bash testing/scripts/run-mutation-courts.sh   # the §93 regression-mutation sui
 Evidence is the source of truth: the compatibility receipt and security
 seal are **generated** from `testing/evidence/<RUN_ID>/`, never hand-edited.
 
+## Resource limits (OOM limits)
+
+The court docker data-root lives on a 26G tmpfs; the suite must fit inside
+it and must never let a container drag the host toward its own OOM killer.
+Two mechanisms enforce this (`testing/scripts/lib.sh`, "OOM limits").
+
+**Memory** — every heavy court container runs under a hard cap with swap
+disabled (`--memory` == `--memory-swap`): a runaway build/proof/VM is OOM-
+killed inside its container and the stage fails loudly, while the host keeps
+running. The cap is `COURT_MEM_LIMIT` (default `48g`, the proven ceiling for
+the Kani verifier):
+
+```sh
+COURT_MEM_LIMIT=32g bash testing/scripts/run-all-courts.sh
+```
+
+**Disk** — the three largest transient consumers never touch the tmpfs:
+
+- the workspace target + registry (`run_in_builder`, used by the unit,
+  adaptive-geometry and shell-aware courts) → `testing/evidence/<RUN_ID>/tmp/`
+- the clean-build caches (`run-clean-court.sh`) → same run-scoped dirs
+- the VM payload build targets (`run-vm-court.sh`) → same run-scoped dirs
+
+`require_headroom <stage> <min-gib>` gates every heavy stage on data-root
+headroom and **aborts before** a stage that would not fit (an ENOSPC
+mid-build would corrupt the run). At run start the legacy cache volumes are
+dropped, and after the WS3 proofs the kani image is dropped (~2.7G; it is
+rebuilt on demand by `bash proofs/run-proofs.sh`). The whole pipeline fits
+the 26G tmpfs with margin — no sudo, no daemon config change.
+
 ## Conventions
 
 - Receipts: every court assertion goes through `ok`/`bad` (courts run

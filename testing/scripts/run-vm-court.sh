@@ -16,13 +16,17 @@ COURT="${1:?usage: run-vm-court.sh <court> [profile] [distro]}"
 PROFILE="${2:-x11}"
 DISTRO="${3:-debian-12}"
 
-# The cargo build-cache volumes. Overridable so the mutation runner can
-# isolate its (deliberately mutated) builds from the production artifacts:
-# a mutated binary left in the shared volume would otherwise be reused by a
-# later court run (cargo fingerprinting cannot tell two /repo mounts apart
-# — the mutation suite mounts its disposable copy at the same path).
-PAYLOAD_TARGET_VOLUME="${PAYLOAD_TARGET_VOLUME:-ferrokey-payload-target}"
-PAYLOAD_TARGETS_VOLUME="${PAYLOAD_TARGETS_VOLUME:-ferrokey-payload-targets}"
+# The cargo build-cache volumes. OOM limits: the defaults are run-scoped
+# bind dirs on the REAL disk (the payload builds are the suite's third
+# biggest transient consumer; the tmpfs data-root never holds them).
+# Overridable so the mutation runner can isolate its (deliberately mutated)
+# builds from the production artifacts: a mutated binary left in the shared
+# volume would otherwise be reused by a later court run (cargo fingerprinting
+# cannot tell two /repo mounts apart — the mutation suite mounts its
+# disposable copy at the same path).
+PAYLOAD_TARGET_VOLUME="${PAYLOAD_TARGET_VOLUME:-$RUN_DIR/tmp/payload-target}"
+PAYLOAD_TARGETS_VOLUME="${PAYLOAD_TARGETS_VOLUME:-$RUN_DIR/tmp/payload-targets}"
+mkdir -p "$PAYLOAD_TARGET_VOLUME" "$PAYLOAD_TARGETS_VOLUME" 2>/dev/null || true
 
 if [ ! -f "$REPO_ROOT/testing/courts/$COURT/court.sh" ]; then
     echo "no court script at testing/courts/$COURT/court.sh"
@@ -60,6 +64,7 @@ echo "==> building product binaries (builder image)"
 # The payload-cargo volume overlays only the registry: a volume mounted over
 # /usr/local/cargo would hide the rust image's cargo toolchain.
 "$DOCKER" run --rm \
+    $(mem_flags) \
     --network "${COURT_NETWORK:-bridge}" \
     -v "$REPO_ROOT:/repo:ro" \
     -v "$PAYLOAD_DIR/bin:/out" \
@@ -75,6 +80,7 @@ echo "==> building product binaries (builder image)"
 
 echo "==> building court targets (targets image)"
 "$DOCKER" run --rm \
+    $(mem_flags) \
     --network "${COURT_NETWORK:-bridge}" \
     -v "$REPO_ROOT/testing/targets:/targets:ro" \
     -v "$PAYLOAD_DIR/bin:/out" \
@@ -130,6 +136,7 @@ fi
 
 "$DOCKER" run --rm \
     "${KVM_ARGS[@]}" \
+    $(mem_flags) \
     --network "${COURT_NETWORK:-bridge}" \
     -v "$REPO_ROOT:/repo:ro" \
     -v ferrokey-vm-state:/court/state \

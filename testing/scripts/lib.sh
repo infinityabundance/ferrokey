@@ -20,7 +20,68 @@ ORACLE_IMAGE="${ORACLE_IMAGE:-ferrokey-oracle:latest}"
 TARGETS_IMAGE="${TARGETS_IMAGE:-ferrokey-targets:latest}"
 KANI_IMAGE="${KANI_IMAGE:-ferrokey-kani:latest}"
 
-mkdir -p "$RUN_DIR"/{courts,logs,devices,screenshots}
+mkdir -p "$RUN_DIR"/{courts,logs,devices,screenshots,tmp}
+
+# ---------------------------------------------------------------------------
+# OOM limits — the bounded-resource layer.
+#
+# The docker data-root lives on a 26G tmpfs at /run, so the suite must keep
+# the tmpfs inside its limit AND must never let a container drag the host
+# toward its own OOM killer. Two mechanisms, applied to every heavy stage:
+#
+#   memory  every court container runs under a hard cap with swap disabled
+#           (--memory == --memory-swap): a runaway build/proof/VM is OOM-
+#           killed INSIDE the container and its stage fails loudly, while the
+#           host keeps running. 48g is the proven cap for the heaviest
+#           container in the suite (the Kani verifier); everything else peaks
+#           well below it. Override with COURT_MEM_LIMIT.
+#
+#   disk    the three largest transient consumers (workspace target+registry,
+#           the clean-build caches, the VM payload build targets) live in
+#           run-scoped bind dirs under $RUN_DIR/tmp on the REAL disk — never
+#           the tmpfs data-root. require_headroom() gates every heavy stage on
+#           data-root headroom so a shortfall aborts the suite BEFORE a stage
+#           instead of ENOSPC-corrupting it mid-build.
+# ---------------------------------------------------------------------------
+COURT_MEM_LIMIT="${COURT_MEM_LIMIT:-48g}"
+
+mem_flags() {
+    # --memory-swap == --memory disables swap at the cap: the container OOMs
+    # at the limit (its stage dies with a clear error) instead of pushing the
+    # host toward OOM. Intentionally unquoted: word-splits into docker args.
+    printf '%s' "--memory $COURT_MEM_LIMIT --memory-swap $COURT_MEM_LIMIT"
+}
+
+data_root_headroom_gib() {
+    local root have_kib
+    root=$("$DOCKER" info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)
+    # df -Pk: 1K blocks; convert KiB -> GiB (integer floor). -Pg is not
+    # portable across df implementations.
+    have_kib=$(df -Pk "$root" 2>/dev/null | awk 'NR==2 {print $4}')
+    [ -n "$have_kib" ] && echo $(( have_kib / 1024 / 1024 ))
+}
+
+require_headroom() {
+    # require_headroom <stage> <min-gib> — abort before a stage can fill the
+    # data-root. A missing measurement only warns (some hosts restrict df).
+    local stage="$1" min="${2:-6}" have
+    have=$(data_root_headroom_gib)
+    if [ -z "$have" ]; then
+        echo "WARNING: '$stage' — cannot measure docker data-root headroom; continuing"
+        return 0
+    fi
+    if [ "$have" -lt "$min" ]; then
+        echo "ERROR: '$stage' needs >= ${min} GiB free on the docker data-root"
+        echo "       (only ${have} GiB free). Free space (docker system prune,"
+        echo "       docker volume rm of court caches) and re-run."
+        echo "       Refusing to start: an ENOSPC mid-build would corrupt the run."
+        exit 1
+    fi
+    echo "'$stage': ${have} GiB free on the docker data-root (needs >= ${min} GiB)"
+}
+
+drop_image()   { "$DOCKER" rmi "$1" >/dev/null 2>&1 || true; }
+drop_volume()  { "$DOCKER" volume rm -f "$1" >/dev/null 2>&1 || true; }
 
 # ---------------------------------------------------------------------------
 # Environment sanitization (rule 33): the court must never see the host GUI.
@@ -137,15 +198,21 @@ host_safety_postflight() {
 # repo mount and container-owned caches (rules 31/32/33/34).
 # ---------------------------------------------------------------------------
 run_in_builder() {
-    local cache_volume="${CARGO_CACHE_VOLUME:-ferrokey-cargo-cache}"
-    local target_volume="${TARGET_CACHE_VOLUME:-ferrokey-target-cache}"
-    # The cache volume overlays only the registry: a volume mounted over
-    # /usr/local/cargo would hide the rust image's cargo toolchain.
+    # OOM limits: the workspace target + registry are the suite's largest
+    # transient consumers; they live in run-scoped bind dirs on the REAL disk
+    # (never the tmpfs data-root), and the container runs under a hard memory
+    # cap. The registry cache still overlays only the registry subdir: a
+    # volume mounted over /usr/local/cargo would hide the rust image's cargo
+    # toolchain.
+    local cache_dir="${CARGO_CACHE_DIR:-$RUN_DIR/tmp/workspace-registry}"
+    local target_dir="${TARGET_CACHE_DIR:-$RUN_DIR/tmp/workspace-target}"
+    mkdir -p "$cache_dir" "$target_dir"
     "$DOCKER" run --rm \
+        $(mem_flags) \
         --network "${COURT_NETWORK:-bridge}" \
         -v "$REPO_ROOT:/repo:ro" \
-        -v "$cache_volume:/usr/local/cargo/registry" \
-        -v "$target_volume:/repo/target" \
+        -v "$cache_dir:/usr/local/cargo/registry" \
+        -v "$target_dir:/repo/target" \
         -e CARGO_HOME=/usr/local/cargo \
         -e CARGO_TARGET_DIR=/repo/target \
         -e DISPLAY= -e WAYLAND_DISPLAY= -e XDG_RUNTIME_DIR=/tmp \
