@@ -15,10 +15,10 @@
 # `|| true` masks a receipt), and run-court-inner.sh exits non-zero on a
 # failed guest receipt, so CI goes RED.
 set -euo pipefail
-# From testing/scripts/run-all-courts.sh the repo root is two levels up
-# (`scripts/..` would leave us in testing/ — the child scripts are relative
-# to the repo root, and `proofs/` lives there too).
-cd "$(dirname "$0")/../.."
+# The suite's relative `scripts/*` calls are anchored at testing/ (there is
+# no top-level scripts/ dir); lib.sh resolves REPO_ROOT absolutely via
+# BASH_SOURCE. New phases outside testing/ must use $REPO_ROOT explicitly.
+cd "$(dirname "$0")/.."
 source scripts/lib.sh
 sanitize_env
 
