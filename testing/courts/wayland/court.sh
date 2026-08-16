@@ -137,7 +137,7 @@ fi
 # ── Focus the wayland target by clicking its window ───────────────────────
 # A pointer click focuses the target (click-to-focus) — this is the initial
 # focus, not a Ferrokey interaction. Click in the upper-middle of the output
-# (the OSK layer surface occupies the bottom 342px), always on the target.
+# (the OSK layer surface occupies the bottom 376px), always on the target.
 sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool mousemove $((WINX + WINW / 2)) $((WINY + WINH / 2 - 150)) click 1
 wait_focus 10
 
@@ -154,8 +154,12 @@ wait_focus 10
 # (keyboard_interactivity=none), so the target keeps it and receives the key.
 POS=$(python3 "$PAYLOAD/courts/osk-geometry.py" a)
 KX="${POS%,*}" KY="${POS#*,}"
-OSK_W=$(awk '$1 == "width:" {print $2}' "$PAYLOAD/fixtures/ferrokey.yaml")
-OSK_H=$(awk '$1 == "height:" {print $2}' "$PAYLOAD/fixtures/ferrokey.yaml")
+# The OSK's actual window at scale 1.0: view 936x354 PLUS the 22px title
+# strip = 936x376. The config's width/height fields do NOT size the window
+# (the app computes view.width × scale) — deriving the click from them puts
+# it 34px low, which lands on the key BELOW 'a'.
+OSK_W=936
+OSK_H=376
 TX=$((WINX + (WINW - OSK_W) / 2 + KX))
 TY=$((WINY + WINH - OSK_H + KY))
 focus_before
