@@ -1,0 +1,142 @@
+# Ferrokey supply-chain policy. The gate is testing/scripts/supply-chain-court.sh;
+# the review it enforces is docs/supply-chain.md.
+#
+# The trusted computing base — ferrokeyd + ferrokey-uinput (+ the core/
+# protocol/layouts/terminal crates they build on) — is a minimal tree
+# (nix, serde, serde_yaml, log, thiserror). The Slint UI tree is larger and
+# deliberately outside the trust boundary (§2 of the threat model: the UI is
+# assumed owned).
+#
+# Advisory posture (cargo-deny >= 0.20): every matching advisory is a HARD
+# ERROR. unmaintained/unsound are checked for the whole tree ("all") — the
+# only tolerated ones are the ignores below, each with a reason citing
+# docs/supply-chain.md. A new unmaintained or unsound crate anywhere in the
+# tree turns the court red; a fixed advisory turns the court red too
+# (unused-ignored-advisory). There is no severity threshold: every advisory
+# counts. The ignore list is verified against the live advisory DB every run
+# — stale or never-seen IDs are reported and fail the gate.
+
+[advisories]
+yanked = "warn"
+unmaintained = "all"
+unsound = "all"
+# Drift control: an ignore ID that no longer matches anything (advisory
+# deleted from the DB, or crate no longer in the tree) fails the check — the
+# ignore list must always be exactly the set of advisories actually being
+# tolerated.
+unused-ignored-advisory = "deny"
+ignore = [
+    # All three are unmaintained advisories reachable ONLY through the Slint
+    # UI (build-time or UI text rendering) — never through the broker TCB —
+    # and none is a memory-safety CVE. Accepted risk with rationale in
+    # docs/supply-chain.md §2. Versions currently in the tree: paste 1.0.15,
+    # rustybuzz 0.20.1, ttf-parser 0.25.1 (Slint 1.17.1 chain).
+    { id = "RUSTSEC-2024-0436", reason = "paste: build/UI-time only, outside the trust boundary — docs/supply-chain.md §2" },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz: UI text rendering only, outside the trust boundary — docs/supply-chain.md §2" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser: UI text rendering only, outside the trust boundary — docs/supply-chain.md §2" },
+]
+
+[licenses]
+# The allow list is EXACTLY the permissive/public-domain licenses used by the
+# current tree (verified mechanically — see docs/supply-chain.md §5). Under
+# cargo-deny 0.20 (v2 semantics) every license not listed here is denied,
+# OSI/FSF-approved or not, and unlicensed is denied by default: this list IS
+# the complete licensing surface.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+    "NCSA",
+]
+# A LICENSE file that cannot be matched to at least this confidence is a
+# failure (no "unknown license" entries may ship).
+confidence-threshold = 0.8
+# Drift control: an allow-list entry that no dependency uses fails the check,
+# so the list always equals the real licensing surface — dependency changes
+# surface here instead of silently rotting the list.
+unused-allowed-license = "deny"
+# Same for exceptions: an exception that matches no crate (e.g. a version
+# that no longer exists) fails the check.
+unused-license-exception = "deny"
+
+# Copyleft deliberately has NO place in the allow list. It enters only through
+# the crate-scoped exceptions below, each naming exactly which pinned
+# dependency carries it, so a NEW copyleft dependency — or a Slint version
+# bump — fails the court until the exception is deliberately re-verified.
+#
+# Slint family @1.17.1 declares "GPL-3.0-only OR LicenseRef-Slint-Royalty-
+# free-2.0 OR LicenseRef-Slint-Software-3.0" (GPL-3.0 OR commercial). The
+# open-source build ships under GPL-3.0-only. These crates are UI-only —
+# never linked by the broker TCB — and the combined UI binary's license is
+# therefore GPL-3.0 (see docs/supply-chain.md §4).
+[[licenses.exceptions]]
+name = "slint"
+version = "=1.17.1"
+allow = ["GPL-3.0-only"]
+[[licenses.exceptions]]
+name = "slint-build"
+version = "=1.17.1"
+allow = ["GPL-3.0-only"]
+[[licenses.exceptions]]
+name = "slint-macros"
+version = "=1.17.1"
+allow = ["GPL-3.0-only"]
+[[licenses.exceptions]]
+name = "i-slint-backend-selector"
+version = "=1.17.1"
+allow = ["GPL-3.0-only"]
+[[licenses.exceptions]]
+name = "i-slint-common"
+version = "=1.17.1"
+allow = ["GPL-3.0-only"]
+[[licenses.exceptions]]
+name = "i-slint-compiler"
+version = "=1.17.1"
+allow = ["GPL-3.0-only"]
+[[licenses.exceptions]]
+name = "i-slint-core"
+version = "=1.17.1"
+allow = ["GPL-3.0-only"]
+[[licenses.exceptions]]
+name = "i-slint-core-macros"
+version = "=1.17.1"
+allow = ["GPL-3.0-only"]
+[[licenses.exceptions]]
+name = "i-slint-renderer-software"
+version = "=1.17.1"
+allow = ["GPL-3.0-only"]
+# r-efi (UEFI type bindings, pulled in at build time by the image toolchain):
+# LGPL-2.1-or-later — the linking-friendly copyleft. Both versions currently
+# in the tree are exceptioned explicitly.
+[[licenses.exceptions]]
+name = "r-efi"
+version = "=5.3.0"
+allow = ["LGPL-2.1-or-later"]
+[[licenses.exceptions]]
+name = "r-efi"
+version = "=6.0.0"
+allow = ["LGPL-2.1-or-later"]
+
+[bans]
+# The TCB has no duplicate versions; the UI's Slint/font chain has documented
+# duplicates (docs/supply-chain.md §3) — reported, never fatal.
+multiple-versions = "warn"
+wildcards = "deny"
+# Crates that must never appear in the tree at any version (deliberately
+# empty: the advisories/license/source gates cover the tree; this list is
+# reserved for crates that are unacceptable regardless of advisory state).
+deny = []
+
+[sources]
+# Only crates.io is a valid source; any git/other-registry dependency fails.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []

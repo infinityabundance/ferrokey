@@ -18,7 +18,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxkbcommon-dev \
         xkb-data \
         groff \
+        pkg-config \
+        libssl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# cargo-deny: the supply-chain court (SC.SUPPLY.*) gates advisories,
+# licenses, duplicate bans and registry sources on EVERY dependency of the
+# workspace. Pinned to a specific version so the court is reproducible.
+RUN cargo install cargo-deny --locked --version 0.20.2 \
+    && rm -rf /usr/local/cargo/registry
 
 # Sanitize the environment inside the court: no host display/session leakage.
 ENV DISPLAY="" \

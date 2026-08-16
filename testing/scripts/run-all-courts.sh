@@ -4,7 +4,8 @@
 #   ./testing/scripts/run-all-courts.sh
 #
 # preflight → purge VM scratch + legacy court caches → build images → unit/
-# build courts (Docker) → clean-build court → VM courts (X11: kernel-security,
+# build courts (Docker) → supply-chain court (cargo-deny) → clean-build court
+# → VM courts (X11: kernel-security,
 # systemd, soak, uinput, permissions, x11, focus, crash, repeat, modifiers,
 # layouts, applications, dead-keys, text-mode, touch, altgr, full-desktop,
 # sdl, terminal; browsers: firefox, chromium, electron; Wayland: wayland,
@@ -80,6 +81,14 @@ echo
 echo "── BUILD + CORE UNIT COURTS (Docker) ──"
 require_headroom "unit/build courts" 6
 bash scripts/run-unit-court.sh
+
+echo
+
+echo "── SUPPLY-CHAIN COURT (Phase 5, cargo-deny) ──"
+# Advisories, licenses, bans, sources — against the committed deny.toml +
+# Cargo.lock, in the builder (never the host). Runs right after the build
+# courts so the registry is already warm.
+bash scripts/supply-chain-court.sh
 
 echo
  echo "── CLEAN BUILD COURT (empty caches) ──"
