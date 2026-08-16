@@ -57,15 +57,32 @@ used by packaging.
 
 The production `ferrokeyd.yaml` ships with `session_scope` **unset** —
 authorization is UID/GID-based (the documented Phase-3 baseline). Session
-binding is implemented and court-proven (`session-lifetime`, `SEC.SESSION.BOUND`),
-but `session-N.scope` is assigned dynamically by the session manager at
-login, so a static config cannot ship a number. **Dynamic session
-discovery** — resolving the active graphical session scope at broker start
-(e.g. from the systemd user manager / `loginctl`) so `session_scope` can be
-deployed without administrator hard-coding — is an explicit packaging task
-for a future phase. Until then, deployments that enable session binding must
-supply the correct scope for their session manager, and must treat the
-config field as deployment-specific, not static.
+binding is court-proven (`session-lifetime`, `SEC.SESSION.BOUND`) and
+supports **dynamic session discovery**: set
+
+```yaml
+session_scope: auto
+```
+
+and the broker resolves its OWN logind session scope from
+`/proc/self/cgroup` at startup (before the freeze) and binds to it — no
+per-login `session-N.scope` number to hard-code in a static config.
+
+Two deliberate properties of `auto`:
+
+* if the broker is not inside a logind session scope (SSH session, system
+  service, headless boot), startup **fails with a clear error** — `auto`
+  never silently falls back to UID/GID authorization;
+* therefore the shipped boot-time unit (a headless system service) keeps
+  `session_scope` unset. The interactive desktop broker — started from the
+  graphical session, or from a per-session systemd unit / autostart entry —
+  is the deployment that should enable `session_scope: auto`.
+
+`session_scope: session-N.scope` still binds an explicit scope for
+administrators who know their session manager's numbering;
+`session_scope: none` is the explicit spelling of the default. The
+`session-lifetime` court proves all three modes (explicit binding, auto
+resolution, and auto's headless refusal).
 
 ## Why the unit looks the way it does
 

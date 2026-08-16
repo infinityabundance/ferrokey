@@ -1,0 +1,19 @@
+# ferrokeyd configuration for the session-lifetime court's AUTO mode (§28,
+# §99): `session_scope: auto` resolves the broker's OWN logind session scope
+# from /proc/self/cgroup at startup (before the freeze) and binds to it.
+# The court moves the whole broker tree into session-99.scope BEFORE start,
+# so auto must resolve exactly that scope. Distinct socket: the explicit-
+# binding broker of the same court already owns the default socket.
+socket_path: /run/ferrokeyd/ferrokeyd-auto.sock
+allowed_uids: [1000]
+allowed_gids: []
+max_connections: 4
+rate:
+  burst: 400
+  per_second: 400
+max_held_keys: 16
+device_name: "Ferrokey Virtual Keyboard"
+socket_mode: 438  # 0o666
+service_user: ferrokeyd
+service_group: ferrokeyd
+session_scope: auto

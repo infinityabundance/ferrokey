@@ -53,11 +53,15 @@ service_group: ferrokeyd
 # processes outside the bound graphical session are then refused.
 #
 # It is intentionally left UNSET here (UID/GID-only authorization, the
-# Phase-3 baseline): session-N.scope is dynamic — the number is assigned by
-# the session manager at login — so a static production file cannot know it
-# ahead of time. Do not hard-code a session number in deployed configs.
-# Dynamic session discovery (resolving the active graphical session scope at
-# broker start, e.g. from the systemd user manager) is the packaging task
-# that must solve this before session_scope can ship on by default.
+# Phase-3 baseline): this unit starts the broker at boot as a headless
+# system service, and `session_scope: auto` REFUSES startup when the broker
+# is not inside a logind session scope (by design — it never silently
+# falls back). For the interactive desktop broker (started from the
+# graphical session, or from a per-session unit), set:
 #
-# session_scope: session-2.scope
+#   session_scope: auto
+#
+# which resolves the broker's own session scope from /proc/self/cgroup at
+# startup — no per-login session number to hard-code. An explicit
+# `session_scope: session-N.scope` binds a fixed scope;
+# `session_scope: none` is the explicit default.

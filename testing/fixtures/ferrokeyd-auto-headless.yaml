@@ -1,0 +1,21 @@
+# ferrokeyd configuration for the session-lifetime court's AUTO-REFUSES-
+# HEADLESS gate (§28, §99): started from a context with NO logind session
+# scope, the broker must REFUSE to start — `session_scope: auto` never
+# silently falls back to UID/GID authorization. The court synthesizes the
+# headless context (a plain cgroup with no session component, exactly like
+# a service slice) because its own SSH shell is a pam_systemd login session.
+# Distinct socket so a stale bind cannot collide with the auto-resolves
+# broker of the same court.
+socket_path: /run/ferrokeyd/ferrokeyd-auto-headless.sock
+allowed_uids: [1000]
+allowed_gids: []
+max_connections: 4
+rate:
+  burst: 400
+  per_second: 400
+max_held_keys: 16
+device_name: "Ferrokey Virtual Keyboard"
+socket_mode: 438  # 0o666
+service_user: ferrokeyd
+service_group: ferrokeyd
+session_scope: auto

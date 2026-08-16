@@ -137,7 +137,7 @@ fn parse_serve_args(args: &[String]) -> Result<ferrokeyd::serve::ServeArgs> {
         per_second: 200,
         max_held_keys: 16,
         device_name: ferrokey_uinput::DEVICE_NAME.into(),
-        session_scope: None,
+        session_scope: ferrokeyd::config::SessionScopeConfig::None,
         allow_root: false,
     };
     let mut i = 1; // args[0] is the handoff fd (first positional), parsed below
@@ -184,15 +184,10 @@ fn parse_serve_args(args: &[String]) -> Result<ferrokeyd::serve::ServeArgs> {
                 i += 2;
             }
             "--session-scope" => {
-                let scope = args
+                let value = args
                     .get(i + 1)
                     .context("--session-scope requires a value")?;
-                if !ferrokeyd::config::is_valid_session_scope(scope) {
-                    anyhow::bail!(
-                        "invalid --session-scope {scope:?}: expected the form 'session-N.scope'"
-                    );
-                }
-                params.session_scope = Some(scope.clone());
+                params.session_scope = parse_session_scope(value)?;
                 i += 2;
             }
             "--allow-root" => {
@@ -242,6 +237,27 @@ fn parse_u32_list(s: Option<&String>) -> Result<Vec<u32>> {
         .collect()
 }
 
+/// Parse a `--session-scope` value: `auto` (resolve the broker's own
+/// session scope at startup), `none` (no binding), or an explicit
+/// `session-N.scope` name (strictly validated).
+fn parse_session_scope(s: &str) -> Result<ferrokeyd::config::SessionScopeConfig> {
+    match s {
+        "auto" => Ok(ferrokeyd::config::SessionScopeConfig::Auto),
+        "none" => Ok(ferrokeyd::config::SessionScopeConfig::None),
+        scope => {
+            if !ferrokeyd::config::is_valid_session_scope(scope) {
+                anyhow::bail!(
+                    "invalid --session-scope {scope:?}: expected 'auto', 'none', or the form \
+                     'session-N.scope'"
+                );
+            }
+            Ok(ferrokeyd::config::SessionScopeConfig::Explicit(
+                scope.to_string(),
+            ))
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // sandbox-probe — host-safe proof of the exact runtime filter
 // ---------------------------------------------------------------------------
@@ -250,6 +266,8 @@ fn cmd_sandbox_probe(args: &[String]) -> Result<()> {
     use ferrokeyd::sandbox;
     // Optional --session-scope exercises the exact session-gated filter
     // (the /proc dirfd is opened first, exactly as serve does pre-freeze).
+    // `auto` resolves the probe's own session scope, mirroring serve's
+    // Auto mode; `none` is the plain (ungated) probe.
     let mut scope: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
@@ -258,12 +276,26 @@ fn cmd_sandbox_probe(args: &[String]) -> Result<()> {
                 let s = args
                     .get(i + 1)
                     .context("--session-scope requires a value")?;
-                if !ferrokeyd::config::is_valid_session_scope(s) {
-                    anyhow::bail!(
-                        "invalid --session-scope {s:?}: expected the form 'session-N.scope'"
-                    );
+                match s.as_str() {
+                    "auto" => {
+                        scope = Some(ferrokeyd::session_scope::self_scope().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "--session-scope auto: the probe is not inside a logind \
+                                     session scope"
+                            )
+                        })?);
+                    }
+                    "none" => {}
+                    s => {
+                        if !ferrokeyd::config::is_valid_session_scope(s) {
+                            anyhow::bail!(
+                                "invalid --session-scope {s:?}: expected 'auto', 'none', or the \
+                                 form 'session-N.scope'"
+                            );
+                        }
+                        scope = Some(s.to_string());
+                    }
                 }
-                scope = Some(s.clone());
                 i += 2;
             }
             other => anyhow::bail!("unknown sandbox-probe argument: {other}"),

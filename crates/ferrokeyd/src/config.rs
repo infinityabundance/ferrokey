@@ -49,6 +49,64 @@ impl Default for RateConfig {
     }
 }
 
+/// How the logind session-scope binding is configured (§28, §99).
+///
+/// The YAML value is a single string:
+///
+/// * `auto` — resolve the broker's OWN logind session scope from
+///   `/proc/self/cgroup` at startup (before the freeze) and bind to it. If
+///   the broker is not inside a logind session scope (SSH session, system
+///   service, headless boot) startup FAILS — `auto` never silently falls
+///   back to UID/GID authorization.
+/// * `none` — no session binding (same as leaving the field unset; the
+///   default).
+/// * anything else — an explicit scope name (`session-N.scope`), validated
+///   strictly. The number is assigned per-login by the session manager, so
+///   an explicit scope is deployment-specific; `auto` exists precisely so
+///   that a static config does not have to hard-code it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SessionScopeConfig {
+    /// UID/GID whitelist only (the Phase-3 baseline §27).
+    #[default]
+    None,
+    /// Bind to an explicitly configured scope name.
+    Explicit(String),
+    /// Resolve the broker's own session scope at startup; fail startup if
+    /// the broker is not inside one.
+    Auto,
+}
+
+// String round-trip: `auto` / `none` are sentinel values, everything else is
+// an explicit scope name (which `validate` checks strictly). A null/empty
+// YAML value (`session_scope:`) is the same as an absent field — `None` —
+// preserving the pre-existing Option<String> behavior.
+impl<'de> serde::Deserialize<'de> for SessionScopeConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = Option::<String>::deserialize(deserializer)?;
+        Ok(match s.as_deref() {
+            None | Some("none") => SessionScopeConfig::None,
+            Some("auto") => SessionScopeConfig::Auto,
+            Some(scope) => SessionScopeConfig::Explicit(scope.to_string()),
+        })
+    }
+}
+
+impl serde::Serialize for SessionScopeConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            SessionScopeConfig::None => serializer.serialize_str("none"),
+            SessionScopeConfig::Auto => serializer.serialize_str("auto"),
+            SessionScopeConfig::Explicit(scope) => serializer.serialize_str(scope),
+        }
+    }
+}
+
 /// Full daemon configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -73,13 +131,14 @@ pub struct DaemonConfig {
     pub service_user: String,
     /// The dedicated service group the runtime drops to (§3).
     pub service_group: String,
-    /// Optional logind session-scope binding (§28, §99): when set, a client
+    /// Logind session-scope binding (§28, §99): when configured, a client
     /// is authorized only if it lives in the same logind session as the
-    /// broker. The value is the cgroup scope name ("session-N.scope") the
-    /// session manager created for the graphical session; the broker matches
-    /// it against the peer's `session-N.scope` cgroup component. When unset
-    /// the broker authorizes by UID/GID only (the Phase-3 baseline §27).
-    pub session_scope: Option<String>,
+    /// broker. `Auto` resolves the broker's OWN session scope from
+    /// `/proc/self/cgroup` at startup (fails startup when the broker is not
+    /// inside a session scope — never silently falls back to UID/GID);
+    /// `Explicit` binds a fixed scope name (`session-N.scope`); `None` (the
+    /// default) authorizes by UID/GID only (the Phase-3 baseline §27).
+    pub session_scope: SessionScopeConfig,
 }
 
 impl Default for DaemonConfig {
@@ -95,7 +154,7 @@ impl Default for DaemonConfig {
             socket_mode: 0o666,
             service_user: "ferrokeyd".into(),
             service_group: "ferrokeyd".into(),
-            session_scope: None,
+            session_scope: SessionScopeConfig::None,
         }
     }
 }
@@ -228,16 +287,19 @@ impl DaemonConfig {
                     .into(),
             ));
         }
-        if let Some(scope) = &self.session_scope {
-            // The scope name is matched against cgroup path components; it is
-            // NEVER used as a filesystem path, so it must be a strict
-            // `session-N.scope` identifier with no separators or traversal.
-            if !is_valid_session_scope(scope) {
-                return Err(ConfigError::Invalid(format!(
-                    "session_scope {scope:?} is not a valid logind scope name \
-                     (expected the form 'session-N.scope')"
-                )));
+        match &self.session_scope {
+            SessionScopeConfig::Explicit(scope) => {
+                // The scope name is matched against cgroup path components; it is
+                // NEVER used as a filesystem path, so it must be a strict
+                // `session-N.scope` identifier with no separators or traversal.
+                if !is_valid_session_scope(scope) {
+                    return Err(ConfigError::Invalid(format!(
+                        "session_scope {scope:?} is not a valid logind scope name \
+                         (expected 'auto', 'none', or the form 'session-N.scope')"
+                    )));
+                }
             }
+            SessionScopeConfig::None | SessionScopeConfig::Auto => {}
         }
         Ok(())
     }
@@ -447,14 +509,47 @@ mod tests {
     #[test]
     fn session_scope_absent_by_default() {
         let cfg = DaemonConfig::parse(&valid_yaml()).unwrap();
-        assert_eq!(cfg.session_scope, None);
+        assert_eq!(cfg.session_scope, SessionScopeConfig::None);
     }
 
     #[test]
     fn valid_session_scope_parses() {
         let yaml = format!("{}\nsession_scope: session-2.scope\n", valid_yaml());
         let cfg = DaemonConfig::parse(&yaml).unwrap();
-        assert_eq!(cfg.session_scope.as_deref(), Some("session-2.scope"));
+        assert_eq!(
+            cfg.session_scope,
+            SessionScopeConfig::Explicit("session-2.scope".into())
+        );
+    }
+
+    #[test]
+    fn auto_session_scope_parses() {
+        let yaml = format!("{}\nsession_scope: auto\n", valid_yaml());
+        let cfg = DaemonConfig::parse(&yaml).unwrap();
+        assert_eq!(cfg.session_scope, SessionScopeConfig::Auto);
+    }
+
+    #[test]
+    fn none_session_scope_parses() {
+        // `session_scope: none` is the explicit spelling of the default.
+        let yaml = format!("{}\nsession_scope: none\n", valid_yaml());
+        let cfg = DaemonConfig::parse(&yaml).unwrap();
+        assert_eq!(cfg.session_scope, SessionScopeConfig::None);
+    }
+
+    #[test]
+    fn session_scope_round_trips_through_serde() {
+        for value in [
+            SessionScopeConfig::None,
+            SessionScopeConfig::Explicit("session-7.scope".into()),
+            SessionScopeConfig::Auto,
+        ] {
+            let mut cfg = DaemonConfig::parse(&valid_yaml()).unwrap();
+            cfg.session_scope = value.clone();
+            let yaml = serde_yaml::to_string(&cfg).unwrap();
+            let back = DaemonConfig::parse(&yaml).unwrap();
+            assert_eq!(back.session_scope, value, "round-trip of {value:?}");
+        }
     }
 
     #[test]

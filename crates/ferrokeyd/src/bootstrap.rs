@@ -17,7 +17,7 @@
 //! privileged; per §45 that config must be root-owned and not
 //! group/world-writable.
 
-use crate::config::{ConfigError, DaemonConfig};
+use crate::config::{ConfigError, DaemonConfig, SessionScopeConfig};
 use crate::fds;
 use crate::security;
 use std::path::PathBuf;
@@ -103,8 +103,17 @@ pub fn run(config_path: Option<PathBuf>) -> Result<(), StartError> {
         .arg(join_u32s(&config.allowed_uids))
         .arg("--gid")
         .arg(join_u32s(&config.allowed_gids));
-    if let Some(scope) = &config.session_scope {
-        serve.arg("--session-scope").arg(scope);
+    match &config.session_scope {
+        SessionScopeConfig::Explicit(scope) => {
+            serve.arg("--session-scope").arg(scope);
+        }
+        // Auto resolves inside the runtime broker (serve) from ITS OWN
+        // /proc/self/cgroup, pre-freeze — the process that enforces the gate
+        // proves its own session membership. Pass the directive through.
+        SessionScopeConfig::Auto => {
+            serve.arg("--session-scope").arg("auto");
+        }
+        SessionScopeConfig::None => {}
     }
     serve.stdin(Stdio::null());
     // §3, §41: the runtime must never start as root. `command_with_dropped_identity`

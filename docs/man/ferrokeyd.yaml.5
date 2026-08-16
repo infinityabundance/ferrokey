@@ -66,13 +66,29 @@ values.
 .TP
 .B session_scope
 Type: string or null. Default: null (UID/GID-only authorization, the
-Phase-3 baseline). Optional logind session-scope binding: when set, a
-client is authorized only if its cgroup carries the SAME session scope. The
-value is the cgroup scope name (form
-.IR session-N.scope );
-the number is assigned by the session manager at login and is
-deployment-specific \- do not hard-code it in static configs (dynamic
-session discovery is planned packaging work). Validation: strictly the form
+Phase-3 baseline). Logind session-scope binding: when set, a client is
+authorized only if its cgroup carries the SAME logind session scope as the
+broker. Three forms:
+.RS
+.IP \(bu 3
+.BR auto :
+resolve the broker's OWN session scope from
+.IR /proc/self/cgroup
+at startup (before the freeze) and bind to it. If the broker is not inside
+a logind session scope (SSH session, system service, headless boot)
+startup FAILS \- auto never silently falls back to UID/GID authorization.
+This is the recommended deployment: no per-login number to hard-code.
+.IP \(bu 3
+.BR none :
+the explicit spelling of the default: no session binding.
+.IP \(bu 3
+.IR session-N.scope :
+bind an explicit scope name. The number is assigned by the session manager
+at login and is deployment-specific; prefer
+.BR auto
+in static configs.
+.RE
+Validation: "auto", "none", or strictly the form
 .IR session-\fIdigits\fP.scope ,
 no path syntax.
 .SH EXAMPLE
@@ -89,6 +105,7 @@ no path syntax.
     device_name: "Ferrokey Virtual Keyboard"
     service_user: ferrokeyd
     service_group: ferrokeyd
+    session_scope: auto
 .fi
 .SH SEE ALSO
 .BR ferrokeyd (1),

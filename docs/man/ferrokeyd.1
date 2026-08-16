@@ -16,7 +16,7 @@ ferrokeyd \- the Ferrokey broker: supervisor, bootstrap, and sandboxed runtime
 .br
 .B ferrokeyd
 .B sandbox-probe
-[\fB\-\-session\-scope\fR \fIscope\fR]
+[\fB\-\-session\-scope\fR \fIvalue\fR]
 .br
 .B ferrokeyd
 .B security-status
@@ -120,10 +120,17 @@ The virtual keyboard device name (default
 .B \-\-uid \fIlist\fR ", " \fB\-\-gid\fR \fIlist\fR
 Comma-separated SO_PEERCRED whitelist (default: deny-all).
 .TP
-.B \-\-session\-scope \fIscope\fR
-Optional logind session-scope binding (form
-.IR session-N.scope );
-clients outside the bound session scope are refused.
+.B \-\-session\-scope \fIvalue\fR
+Optional logind session-scope binding: clients outside the bound session
+scope are refused.
+.B auto
+resolves the broker's own session scope from
+.IR /proc/self/cgroup
+at startup and fails startup when the broker is not inside one;
+.B none
+disables the binding;
+.IR session-N.scope
+binds an explicit scope.
 .TP
 .B \-\-allow\-root
 Development/testing override: allow serving as root. Prints a warning.
@@ -142,9 +149,13 @@ filter, enforcement probes) and print the probe report. Exits non-zero if
 any forbidden syscall is not denied. Used by the kernel-security court and
 by operators to prove the filter that would be installed.
 .TP
-.B \-\-session\-scope \fIscope\fR
-Exercise the session-gated filter variant (form
-.IR session-N.scope ).
+.B \-\-session\-scope \fIvalue\fR
+Exercise the session-gated filter variant:
+.B auto
+resolves the probe's own session scope from
+.IR /proc/self/cgroup ,
+.IR session-N.scope
+binds an explicit scope.
 .SS security-status
 .B ferrokeyd security-status
 \fB\-\-pid\fR \fIpid\fR

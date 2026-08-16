@@ -5,12 +5,13 @@
 #
 # preflight → purge VM scratch + legacy court caches → build images → unit/
 # build courts (Docker) → supply-chain court (cargo-deny) → clean-build court
-# → VM courts (X11: kernel-security,
-# systemd, soak, uinput, permissions, x11, focus, crash, repeat, modifiers,
-# layouts, applications, dead-keys, text-mode, touch, altgr, full-desktop,
-# sdl, terminal; browsers: firefox, chromium, electron; Wayland: wayland,
-# xwayland) → mutation courts (§93) → evidence pull → security seal (§90,
-# §91, §96) → evidence → compatibility receipt → postflight.
+# → VM courts (X11: kernel-security, systemd, soak, uinput, permissions, x11,
+# focus, crash, repeat, modifiers, layouts, applications, dead-keys, text-mode,
+# touch, altgr, full-desktop, sdl, terminal, terminal-workspace,
+# session-lifetime, package; browsers: firefox, chromium, electron; Wayland:
+# wayland, xwayland, backend-selection) → mutation courts (§93) → evidence pull
+# → security seal (§90, §91, §96) → evidence → compatibility receipt →
+# postflight.
 #
 # OOM limits: the docker data-root is a 26G tmpfs. Heavy build outputs are
 # run-scoped bind dirs on the real disk (lib.sh run_in_builder, run-vm-court),
@@ -130,7 +131,7 @@ echo
  require_headroom "vm courts (x11 profile)" 8
  for court in kernel-security systemd soak socket-hijack cross-user device-lifetime uinput permissions x11 focus crash \
     repeat modifiers layouts applications dead-keys text-mode touch altgr \
-    full-desktop sdl terminal terminal-workspace session-lifetime; do
+    full-desktop sdl terminal terminal-workspace session-lifetime package; do
     echo
     echo "── VM court: $court ──"
     bash scripts/run-vm-court.sh "$court" x11

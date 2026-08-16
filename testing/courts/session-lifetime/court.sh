@@ -15,8 +15,9 @@
 #     is processed.
 #
 # The court manipulates real cgroups (cgroup v2): the in-session client is
-# moved into a `session-99.scope` cgroup before connecting; the court's
-# own shell stays outside it (under the sshd service slice).
+# moved into a `session-99.scope` cgroup before connecting; the court's own
+# shell lives in ITS OWN logind session (SSH/PAM assigns a session-N.scope),
+# never in session-99.scope — so the broker sees it as out-of-session.
 set -euo pipefail
 source "$(dirname "$0")/../lib.sh"
 
@@ -100,6 +101,120 @@ if echo "$PROBE_OUT" | grep -q "openat_denied=true openat_event_dev_denied=true 
     ok "SESSION.004 sandbox intact: base openat denials + the session gate"
 else
     bad "SESSION.004 sandbox report unexpected: $PROBE_OUT"
+fi
+
+# ── SESSION.AUTO.RESOLVES: `session_scope: auto` binds the broker's OWN ────
+# session scope. The whole broker tree is moved into the court session cgroup
+# BEFORE start, so the runtime broker's own /proc/self/cgroup carries
+# session-99.scope and auto must resolve exactly that — no hard-coded number
+# anywhere in the config.
+AUTO_SOCK=/run/ferrokeyd/ferrokeyd-auto.sock
+sudo chown root:root "$PAYLOAD/fixtures/ferrokeyd-auto.yaml" "$PAYLOAD/fixtures/ferrokeyd-auto-headless.yaml"
+sudo chmod 0644 "$PAYLOAD/fixtures/ferrokeyd-auto.yaml" "$PAYLOAD/fixtures/ferrokeyd-auto-headless.yaml"
+sudo env CG="$CG" PAYLOAD="$PAYLOAD" OUT="$OUT" bash -c '
+    echo $$ > "$CG/cgroup.procs"
+    nohup env RUST_LOG=info "$PAYLOAD/bin/ferrokeyd" start \
+        --config "$PAYLOAD/fixtures/ferrokeyd-auto.yaml" \
+        >"$OUT/ferrokeyd-auto.log" 2>&1 &
+'
+sleep 2
+if [ -S "$AUTO_SOCK" ]; then
+    ok "SESSION.AUTO.001 auto broker listening"
+else
+    bad "SESSION.AUTO.001 auto broker did not start"
+    cat "$OUT/ferrokeyd-auto.log"
+fi
+if grep -q "auto-resolved session scope 'session-99.scope'" "$OUT/ferrokeyd-auto.log" 2>/dev/null; then
+    ok "SESSION.AUTO.001 auto resolved the broker's own session scope"
+else
+    bad "SESSION.AUTO.001 auto resolution not observed"
+    cat "$OUT/ferrokeyd-auto.log"
+fi
+
+# in-session client on the auto-bound socket is authorized
+sudo env CG="$CG" AUTO_SOCK="$AUTO_SOCK" CLIENT="$PAYLOAD/courts/fk-client.py" sh -c '
+    echo $$ > "$CG/cgroup.procs"
+    exec setpriv --reuid=1000 --regid=1000 --clear-groups \
+        python3 "$CLIENT" --socket "$AUTO_SOCK" handshake key-down 30 key-up 30 release-all
+' >"$OUT/auto-in-session.log" 2>&1
+if grep -q "handshake: ok" "$OUT/auto-in-session.log" 2>/dev/null \
+    && grep -q "release-all: ok" "$OUT/auto-in-session.log" 2>/dev/null; then
+    ok "SESSION.AUTO.002 in-session client authorized on the auto-bound socket"
+else
+    bad "SESSION.AUTO.002 in-session client was not served"
+    cat "$OUT/auto-in-session.log"
+fi
+
+# out-of-session client is rejected at authorize (same as the explicit mode)
+set +e
+python3 "$PAYLOAD/courts/fk-client.py" --socket "$AUTO_SOCK" handshake key-down 30 key-up 30 release-all >"$OUT/auto-out-session.log" 2>&1
+AUTO_OUT_RC=$?
+set -e
+if grep -q "handshake: FAILED" "$OUT/auto-out-session.log" 2>/dev/null; then
+    ok "SESSION.AUTO.003 out-of-session client rejected on the auto-bound socket"
+else
+    bad "SESSION.AUTO.003 out-of-session client was NOT rejected (rc=$AUTO_OUT_RC)"
+    cat "$OUT/auto-out-session.log"
+fi
+
+# ── SESSION.AUTO.REFUSES_HEADLESS: outside any session scope, auto must ─────
+# fail startup — never silently fall back to UID/GID authorization.
+#
+# A real headless context has NO logind session scope in its cgroup path
+# (systemd service slice, cron, sshd without pam_systemd). The court shell
+# itself lives in an SSH logind session — pam_systemd assigns every login a
+# session-N.scope — so the headless context is synthesized faithfully: the
+# whole test tree is moved into a plain cgroup whose path has no session
+# component, exactly like a service slice.
+HEADLESS_CG=/sys/fs/cgroup/ferrokey-headless
+sudo mkdir -p "$HEADLESS_CG"
+SERVE_BEFORE=$(pgrep -cf "proc/self/exe serve" || true)
+set +e
+sudo env HEADLESS_CG="$HEADLESS_CG" PAYLOAD="$PAYLOAD" OUT="$OUT" bash -c '
+    echo $$ > "$HEADLESS_CG/cgroup.procs"
+    exec env RUST_LOG=info "$PAYLOAD/bin/ferrokeyd" start \
+        --config "$PAYLOAD/fixtures/ferrokeyd-auto-headless.yaml" \
+        >"$OUT/ferrokeyd-auto-headless.log" 2>&1
+'
+HEADLESS_RC=$?
+set -e
+SERVE_AFTER=$(pgrep -cf "proc/self/exe serve" || true)
+if [ "$HEADLESS_RC" -ne 0 ]; then
+    ok "SESSION.AUTO.004 headless auto start refused (rc=$HEADLESS_RC)"
+else
+    bad "SESSION.AUTO.004 headless auto start unexpectedly succeeded"
+fi
+if grep -q "not inside a logind session scope" "$OUT/ferrokeyd-auto-headless.log" 2>/dev/null \
+    && grep -q "refusing to fall back" "$OUT/ferrokeyd-auto-headless.log" 2>/dev/null; then
+    ok "SESSION.AUTO.004 refusal message logged (no silent UID/GID fallback)"
+else
+    bad "SESSION.AUTO.004 refusal message not logged"
+    cat "$OUT/ferrokeyd-auto-headless.log"
+fi
+if [ "$SERVE_AFTER" -eq "$SERVE_BEFORE" ]; then
+    ok "SESSION.AUTO.004 no broker process appeared ($SERVE_BEFORE -> $SERVE_AFTER)"
+else
+    bad "SESSION.AUTO.004 a broker process appeared ($SERVE_BEFORE -> $SERVE_AFTER)"
+fi
+
+# ── the CLI accepts `--session-scope auto`; headless it refuses ─────────────
+# (mirrors serve's Auto mode at the diagnostic level; run from the same
+# synthetic headless cgroup, because the court shell's own SSH login is a
+# pam_systemd session).
+set +e
+sudo env HEADLESS_CG="$HEADLESS_CG" PAYLOAD="$PAYLOAD" OUT="$OUT" bash -c '
+    echo $$ > "$HEADLESS_CG/cgroup.procs"
+    exec "$PAYLOAD/bin/ferrokeyd" sandbox-probe --session-scope auto \
+        >"$OUT/sandbox-probe-auto.txt" 2>&1
+'
+AUTO_PROBE_RC=$?
+set -e
+if [ "$AUTO_PROBE_RC" -ne 0 ] \
+    && grep -q "not inside a logind session scope" "$OUT/sandbox-probe-auto.txt" 2>/dev/null; then
+    ok "SESSION.AUTO.005 sandbox-probe --session-scope auto refuses headless"
+else
+    bad "SESSION.AUTO.005 sandbox-probe --session-scope auto unexpected (rc=$AUTO_PROBE_RC)"
+    cat "$OUT/sandbox-probe-auto.txt" 2>/dev/null
 fi
 
 finish_court "court" "session-lifetime"

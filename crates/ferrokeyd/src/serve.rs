@@ -51,9 +51,11 @@ pub struct ServeArgs {
     pub socket_mode: u32,
     pub allowed_uids: Vec<u32>,
     pub allowed_gids: Vec<u32>,
-    /// Optional logind session-scope binding (§28, §99): clients must live
-    /// in this session scope.
-    pub session_scope: Option<String>,
+    /// Logind session-scope binding (§28, §99): clients must live in this
+    /// session scope. `Auto` resolves the runtime broker's own session
+    /// scope from `/proc/self/cgroup` (pre-freeze) and binds to it; startup
+    /// FAILS when the broker is not inside one.
+    pub session_scope: crate::config::SessionScopeConfig,
     pub max_connections: usize,
     pub burst: u32,
     pub per_second: u32,
@@ -193,7 +195,7 @@ pub fn run(args: ServeArgs) -> Result<(), ServeError> {
     //    lookup is opened BEFORE the freeze (the seccomp gate bakes the fd
     //    number into the runtime filter; the fd inventory accounts for it).
     let session_gate = match &args.session_scope {
-        Some(scope) => {
+        crate::config::SessionScopeConfig::Explicit(scope) => {
             let gate = crate::session_scope::SessionScopeGate::open(scope)
                 .map_err(|e| ServeError::Io(format!("cannot open the session-scope gate: {e}")))?;
             log::info!(
@@ -203,7 +205,30 @@ pub fn run(args: ServeArgs) -> Result<(), ServeError> {
             );
             Some(gate)
         }
-        None => None,
+        crate::config::SessionScopeConfig::Auto => {
+            // Resolve the runtime broker's OWN session scope from its own
+            // cgroup, pre-freeze. This is a hard requirement, not a hint:
+            // when the broker is not inside a logind session scope (SSH,
+            // a system service, a headless boot) startup FAILS — auto never
+            // silently falls back to UID/GID-only authorization.
+            let scope = crate::session_scope::self_scope().ok_or_else(|| {
+                ServeError::Io(
+                    "session_scope: auto but the broker is not inside a logind session scope \
+                     (start it from the graphical session, not from SSH / a service / a \
+                     headless boot); refusing to fall back to UID/GID-only authorization"
+                        .into(),
+                )
+            })?;
+            let gate = crate::session_scope::SessionScopeGate::open(&scope)
+                .map_err(|e| ServeError::Io(format!("cannot open the session-scope gate: {e}")))?;
+            log::info!(
+                "serve: auto-resolved session scope '{}' from the broker's own cgroup (proc dirfd {})",
+                gate.bound_scope(),
+                gate.proc_dirfd()
+            );
+            Some(gate)
+        }
+        crate::config::SessionScopeConfig::None => None,
     };
 
     // ── SECURITY FREEZE (§41) ────────────────────────────────────────────
