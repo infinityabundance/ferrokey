@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! layer = overlay
-//! anchor = bottom | left | right
+//! anchor = bottom | left   (margins drive free positioning)
 //! keyboard_interactivity = none
 //! ```
 //!
@@ -13,6 +13,13 @@
 //! layer surfaces keep receiving pointer/touch events. That is precisely the
 //! OSK primitive Ferrokey needs: the focused target stays focused, Ferrokey
 //! stays interactive, and injected keys land in the target.
+//!
+//! Anchoring is deliberately a SINGLE corner (`bottom | left`) rather than
+//! an edge span: with a corner anchor the surface's position is fully
+//! determined by `set_margin`, so the app can own and move the OSK
+//! (interactive drag) and always knows where it is. An edge-span anchor
+//! (bottom | left | right) would leave placement to the compositor and make
+//! the current position unknowable.
 
 use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::protocol::wl_surface::WlSurface;
@@ -28,8 +35,8 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
 pub const NAMESPACE: &str = "ferrokey-osk";
 
 /// Create the layer surface on `surface` with the OSK semantics:
-/// overlay layer, anchored to the bottom edge, and
-/// `keyboard_interactivity = none`.
+/// overlay layer, anchored to the bottom-left corner (positioned by
+/// margins), and `keyboard_interactivity = none`.
 ///
 /// `output` may be `None` (the compositor picks the output; anchored edges
 /// then apply to all outputs).
@@ -52,9 +59,12 @@ where
         qh,
         (),
     );
-    layer_surface.set_anchor(Anchor::Bottom | Anchor::Left | Anchor::Right);
+    layer_surface.set_anchor(Anchor::Bottom | Anchor::Left);
     layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
     layer_surface.set_size(width, height);
+    // Default position: flush to the bottom-left corner until the output
+    // size is known; WaylandSurface::connect re-centers once it arrives.
+    layer_surface.set_margin(0, 0, 0, 0);
     layer_surface
 }
 

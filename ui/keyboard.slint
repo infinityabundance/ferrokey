@@ -14,17 +14,25 @@
 // events against the view geometry and drives key-pressed/key-released
 // directly (rules 18, 85). Each Key's TouchArea only lights the cap.
 
-import { Key, KeyData } from "key.slint";
+import { Key, KeyData, LitState } from "key.slint";
 
 component KeyRow inherits HorizontalLayout {
     in property <[KeyData]> keys: [];
     in property <length> base-width: 58px;
+    in property <length> key-height: 52px;
+    in property <length> min-key-width: 24px;
+    in property <float> scale: 1.0;
+    in property <LitState> lit-state: { shift: false, ctrl: false, alt: false, altgr: false, meta: false, fn-key: false, caps: false, num: false };
 
-    spacing: 6px;
+    spacing: 6px * root.scale;
 
     for k in keys: Key {
         key-data: k;
         base-width: root.base-width;
+        key-height: root.key-height;
+        min-key-width: root.min-key-width;
+        label-scale: root.scale;
+        lit-state: root.lit-state;
     }
 }
 
@@ -38,20 +46,29 @@ export component Keyboard inherits Rectangle {
     in property <[KeyData]> row7: [];
     in property <bool> degraded: false;
     in property <length> base-width: 58px;
+    /// Uniform keyboard scale (1.0 = the view's natural size): key heights,
+    /// minimum widths, spacing and padding all scale with it, so the OSK
+    /// grows and shrinks with the window while the key grid stays aligned
+    /// with the Rust hit-testing (which maps through the same scale).
+    in property <float> scale: 1.0;
+    in property <length> key-height: 52px;
+    in property <length> min-key-width: 24px;
+    /// Which modifier caps stay lit (held / latched / locked).
+    in property <LitState> lit-state: { shift: false, ctrl: false, alt: false, altgr: false, meta: false, fn-key: false, caps: false, num: false };
 
     background: transparent;
 
     VerticalLayout {
-        padding: 6px;
-        spacing: 6px;
+        padding: 6px * root.scale;
+        spacing: 6px * root.scale;
 
-        KeyRow { keys: row1; base-width: root.base-width; }
-        KeyRow { keys: row2; base-width: root.base-width; }
-        KeyRow { keys: row3; base-width: root.base-width; }
-        KeyRow { keys: row4; base-width: root.base-width; }
-        KeyRow { keys: row5; base-width: root.base-width; }
-        KeyRow { keys: row6; base-width: root.base-width; }
-        KeyRow { keys: row7; base-width: root.base-width; }
+        KeyRow { keys: row1; base-width: root.base-width; key-height: root.key-height; min-key-width: root.min-key-width; scale: root.scale; lit-state: root.lit-state; }
+        KeyRow { keys: row2; base-width: root.base-width; key-height: root.key-height; min-key-width: root.min-key-width; scale: root.scale; lit-state: root.lit-state; }
+        KeyRow { keys: row3; base-width: root.base-width; key-height: root.key-height; min-key-width: root.min-key-width; scale: root.scale; lit-state: root.lit-state; }
+        KeyRow { keys: row4; base-width: root.base-width; key-height: root.key-height; min-key-width: root.min-key-width; scale: root.scale; lit-state: root.lit-state; }
+        KeyRow { keys: row5; base-width: root.base-width; key-height: root.key-height; min-key-width: root.min-key-width; scale: root.scale; lit-state: root.lit-state; }
+        KeyRow { keys: row6; base-width: root.base-width; key-height: root.key-height; min-key-width: root.min-key-width; scale: root.scale; lit-state: root.lit-state; }
+        KeyRow { keys: row7; base-width: root.base-width; key-height: root.key-height; min-key-width: root.min-key-width; scale: root.scale; lit-state: root.lit-state; }
     }
 
     if root.degraded: Rectangle {

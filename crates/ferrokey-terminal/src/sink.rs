@@ -90,6 +90,12 @@ pub struct TerminalKeySink {
     modes: Rc<RefCell<TerminalModes>>,
     sink: Box<dyn TerminalInputSink>,
     held_mods: ModifierSet,
+    /// Caps Lock state, tracked from the CapsLock key's release events (the
+    /// driver toggles caps on release, so the sink toggles on the same event
+    /// and stays in lockstep). The terminal encoder applies it as XOR-shift
+    /// over LETTER keys only — mirroring how the kernel applies Caps Lock for
+    /// the system path.
+    caps_lock: bool,
     /// Diagnostics counter (the invariant courts assert on:
     /// `terminal_mode_uinput_events == 0` is asserted by the app, not here).
     pub encoded_events: u64,
@@ -107,6 +113,7 @@ impl TerminalKeySink {
             modes,
             sink,
             held_mods: ModifierSet::empty(),
+            caps_lock: false,
             encoded_events: 0,
             rejected_events: 0,
         }
@@ -118,11 +125,26 @@ impl TerminalKeySink {
 
     fn encode_and_send(&mut self, key: PhysicalKey) -> Result<(), TerminalSinkError> {
         let modes = self.modes.borrow().clone();
-        if let Some(bytes) = self.encoder.encode(key, self.held_mods, &modes) {
+        let mut effective = self.held_mods;
+        // Caps Lock applies to LETTER keys only, exactly like the kernel's
+        // caps for the system path: XOR with shift (caps + shift = lowercase,
+        // like a physical keyboard). Other keys are unaffected — Ctrl+C with
+        // caps on must stay Ctrl+C, and Shift+Up must not become a shifted
+        // cursor sequence.
+        if self.caps_lock
+            && crate::key_encoder::base_ascii(key).is_some_and(|c| c.is_ascii_alphabetic())
+        {
+            if effective.contains(ModifierSet::SHIFT) {
+                effective.remove(ModifierSet::SHIFT);
+            } else {
+                effective.insert(ModifierSet::SHIFT);
+            }
+        }
+        if let Some(bytes) = self.encoder.encode(key, effective, &modes) {
             self.encoded_events = self.encoded_events.wrapping_add(1);
             log::debug!(
                 "terminal encode {key:?} mods={:?} -> {} bytes",
-                self.held_mods,
+                effective,
                 bytes.len()
             );
             self.sink.send(&bytes)
@@ -140,6 +162,11 @@ impl KeySink for TerminalKeySink {
             self.held_mods.insert(kind.into());
             return Ok(());
         }
+        // Lock keys toggle logical state (tracked for caps) and produce no
+        // terminal bytes.
+        if key.is_lock_key() {
+            return Ok(());
+        }
         self.encode_and_send(key)
             .map_err(|e| SinkError(e.to_string()))
     }
@@ -147,6 +174,10 @@ impl KeySink for TerminalKeySink {
     fn key_up(&mut self, key: PhysicalKey) -> Result<(), SinkError> {
         if let Some(kind) = key.modifier_kind() {
             self.held_mods.remove(kind.into());
+        } else if key == PhysicalKey::CapsLock {
+            // The driver toggles caps on the CapsLock release; mirror it
+            // here so the encoder stays in lockstep.
+            self.caps_lock = !self.caps_lock;
         }
         // Key releases produce no terminal bytes.
         Ok(())
@@ -274,5 +305,45 @@ mod tests {
     #[test]
     fn base_ascii_used_for_letters() {
         assert_eq!(base_ascii(PhysicalKey::Q), Some('q'));
+    }
+
+    #[test]
+    fn caps_lock_uppercases_letters_only() {
+        let modes = Rc::new(RefCell::new(TerminalModes::default()));
+        let bytes = Rc::new(RefCell::new(Vec::new()));
+        let encoder =
+            TerminalKeyEncoder::new(Arc::new(ferrokey_layouts::builtin("us").expect("us")));
+        let mut s = TerminalKeySink::new(
+            encoder,
+            modes.clone(),
+            Box::new(RecordingSink {
+                bytes: bytes.clone(),
+            }),
+        );
+        // Caps ON: toggled on the CapsLock release, mirroring the driver.
+        s.key_down(PhysicalKey::CapsLock).unwrap();
+        s.key_up(PhysicalKey::CapsLock).unwrap();
+        s.key_down(PhysicalKey::A).unwrap();
+        assert_eq!(*bytes.borrow(), b"A");
+        // Digits are NOT affected by caps (letters only, like the kernel).
+        s.key_down(PhysicalKey::D1).unwrap();
+        assert_eq!(*bytes.borrow(), b"A1");
+        // Ctrl+C is unaffected by caps.
+        s.key_down(PhysicalKey::LeftCtrl).unwrap();
+        s.key_down(PhysicalKey::C).unwrap();
+        assert_eq!(*bytes.borrow(), b"A1\x03");
+        s.key_up(PhysicalKey::C).unwrap();
+        s.key_up(PhysicalKey::LeftCtrl).unwrap();
+        // Shift + letter with caps = lowercase (XOR, exactly the kernel rule).
+        s.key_down(PhysicalKey::LeftShift).unwrap();
+        s.key_down(PhysicalKey::B).unwrap();
+        assert_eq!(*bytes.borrow(), b"A1\x03b");
+        s.key_up(PhysicalKey::B).unwrap();
+        s.key_up(PhysicalKey::LeftShift).unwrap();
+        // Caps OFF: back to lowercase.
+        s.key_down(PhysicalKey::CapsLock).unwrap();
+        s.key_up(PhysicalKey::CapsLock).unwrap();
+        s.key_down(PhysicalKey::C).unwrap();
+        assert_eq!(*bytes.borrow(), b"A1\x03bc");
     }
 }

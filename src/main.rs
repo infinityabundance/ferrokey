@@ -24,17 +24,20 @@ mod input;
 mod pointer;
 mod term_input;
 mod text;
+mod tray;
 mod views;
 
 use anyhow::Context;
 use config::UiConfig;
-use daemon::DaemonLink;
+use daemon::{DaemonLink, LinkState};
 use ferrokey_core::{
     KeyAction, KeySymbol, KeyboardDriver, ModifierSet, RepeatSettings, StateSettings, VirtualKey,
 };
 use ferrokey_layouts::builtin;
 use ferrokey_surface::slint_adapter::FerrokeyPlatform;
-use ferrokey_surface::{detect, fallback::NullSurface, Surface, SurfaceBackend, SurfaceEvent};
+use ferrokey_surface::{
+    detect, fallback::NullSurface, PointerButton, Surface, SurfaceBackend, SurfaceEvent,
+};
 use ferrokey_terminal::{
     Terminal as TerminalEngine, TerminalConfig, TerminalKeyEncoder, TerminalKeySink,
 };
@@ -47,10 +50,47 @@ use std::time::{Duration, Instant};
 
 slint::include_modules!();
 
+/// Minimum/maximum uniform keyboard scale (the window can resize the whole
+/// OSK; 1.0 = the view's natural size).
+const MIN_VIEW_SCALE: f32 = 0.35;
+const MAX_VIEW_SCALE: f32 = 3.0;
+
 /// The single monotonic epoch for the keyboard engine's time input: captured
 /// once at process start, so every `Moment` across modules shares one clock
 /// (mixed epochs would corrupt tap/latch timing).
 static STARTED: OnceLock<Instant> = OnceLock::new();
+
+/// Interactive-window gesture: drag the top edge to move, drag the
+/// bottom-right corner to resize. The OSK is positioned like a normal window
+/// while keeping its no-focus contract (`keyboard_interactivity = none` on
+/// Wayland, `WM_HINTS.input = False` on X11) — the surface API's move/resize
+/// only ever touches position/size. Presses inside a grip zone are swallowed
+/// by this layer and never reach the pointer bridge, so a grab can neither
+/// fire a key nor leave a ghost hold.
+enum WindowGesture {
+    Idle,
+    Move {
+        /// The window's top-left at grab time (and updated after every
+        /// move), so the drag is self-contained: the target is always
+        /// `window position + pointer delta`, never a re-read of surface
+        /// state that might have diverged (e.g. after a hide/show cycle).
+        win_x: i32,
+        win_y: i32,
+        grab_x: f64,
+        grab_y: f64,
+    },
+    Resize {
+        start_scale: f32,
+        grab_x: f64,
+        grab_y: f64,
+    },
+}
+
+/// The top edge band (logical px of the title strip) that drags the window;
+/// the gesture converts it to physical px via the platform scale.
+const MOVE_BAND: f64 = 22.0;
+/// The bottom-right corner (physical px) that resizes the window.
+const RESIZE_CORNER: f64 = 28.0;
 
 /// The current engine time (`ferrokey-core`'s deterministic `Moment`).
 pub(crate) fn now_moment() -> ferrokey_core::Moment {
@@ -239,17 +279,26 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
 
     // ── Terminal workspace mode ───────────────────────────────────────────
     let terminal_cfg = &config.terminal;
+    // The window is the fixed 22px title strip PLUS the keyboard, sized at
+    // the configured initial scale (1.0 = the view's natural size; the
+    // shipped default is 0.75). The runtime transform re-derives the exact
+    // scale from the window size.
+    let title_h = views::TITLE_H as u32;
+    let scale = config.scale.clamp(MIN_VIEW_SCALE, MAX_VIEW_SCALE);
+    let win_width = (keyboard_w as f32 * scale).round() as u32;
+    let win_height = (keyboard_h as f32 * scale).round() as u32;
     let (win_width, win_height) = if terminal_cfg.enabled {
         let pane_h = terminal_cfg.pane_height.max(200);
         log::info!(
-            "terminal workspace mode: pane {}px, font {}px, scrollback {}",
+            "terminal workspace mode: pane {}px, font {}px, scrollback {}, scale {scale:.2}",
             pane_h,
             terminal_cfg.font_size_px,
             terminal_cfg.scrollback_lines
         );
-        (keyboard_w, keyboard_h + pane_h)
+        (win_width, win_height + pane_h + title_h)
     } else {
-        (keyboard_w, keyboard_h)
+        log::info!("initial keyboard scale {scale:.2} (window {win_width}x{win_height})");
+        (win_width, win_height + title_h)
     };
 
     // ── Surface detection (capability-driven, never compositor-name based) ──
@@ -402,9 +451,7 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
     let driver = Rc::new(RefCell::new(KeyboardDriver::new(
         StateSettings {
             latch_enabled: config.sticky.latch_enabled,
-            lock_enabled: config.sticky.lock_enabled,
             tap_timeout: Duration::from_millis(config.sticky.tap_timeout_ms),
-            double_tap_timeout: Duration::from_millis(config.sticky.double_tap_timeout_ms),
             ..Default::default()
         },
         RepeatSettings {
@@ -418,12 +465,12 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
     // Text-mode composer: dead keys + compose sequences over the layout.
     let composer = Rc::new(RefCell::new(text::TextComposer::new(layout.clone())));
     log::info!(
-        "driver: repeat enabled={} delay={}ms cadence={}ms latch={} lock={}",
+        "driver: repeat enabled={} delay={}ms cadence={}ms latch={} tap={}ms",
         config.repeat.enabled,
         config.repeat.delay_ms,
         config.repeat.cadence_ms,
         config.sticky.latch_enabled,
-        config.sticky.lock_enabled
+        config.sticky.tap_timeout_ms
     );
 
     // ── Wire the UI callbacks ──────────────────────────────────────────────
@@ -534,7 +581,12 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
     };
     let mut bridge = pointer::PointerBridge::new(view, platform.scale(), adaptive);
     let mut terminal_input = term_input::TerminalInput::default();
-    let keyboard_h_phys = keyboard_h;
+
+    // Apply the window→view transform (uniform keyboard scale + centering
+    // below the title strip) once at startup; Resized events re-apply it.
+    let s0 = apply_view_transform(&ui, &platform, &mut bridge, view);
+    let mut keyboard_h_phys =
+        ((views::TITLE_H + view.height as f32 * s0) * platform.scale().max(0.25)) as u32;
 
     // WS5: shell-aware terminal rows. The initial identity is KNOWN from the
     // child Ferrokey itself spawned (§5.2); later transitions are learned
@@ -560,10 +612,33 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
                       // below inspects its child's process tree
     }
 
+    // System tray presence (no-op without a session DBus, e.g. the courts).
+    let tray = tray::Tray::start();
+
     let mut last_ping = Instant::now();
     let mut last_status_update = Instant::now();
     let mut last_shell_probe = Instant::now();
+    let mut gesture = WindowGesture::Idle;
+    // The current uniform keyboard scale (tracked for the resize gesture).
+    let mut current_view_scale = s0;
+    // OSK visibility (the tray can show/hide it).
+    let mut visible = true;
+    let mut last_lit: (bool, bool, bool, bool, bool, bool, bool, bool) =
+        (false, false, false, false, false, false, false, false);
     loop {
+        // Tray commands (show/hide, quit) are polled every frame.
+        if let Some(t) = &tray {
+            match t.command() {
+                tray::TrayCommand::Toggle => {
+                    visible = !visible;
+                    if let Err(e) = platform.set_visible(visible) {
+                        log::warn!("tray toggle failed: {e}");
+                    }
+                    log::info!("OSK visibility -> {visible}");
+                }
+                tray::TrayCommand::None => {}
+            }
+        }
         bridge.set_scale(platform.scale());
 
         // 1. Surface events: dispatched into Slint (visuals) AND returned so
@@ -577,6 +652,14 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
         };
         let now = Instant::now();
         for event in events {
+            // A window resize (user gesture or compositor) re-derives the
+            // keyboard scale + offset, and the terminal pane boundary.
+            if let SurfaceEvent::Resized { .. } = event {
+                let s = apply_view_transform(&ui, &platform, &mut bridge, view);
+                current_view_scale = s;
+                keyboard_h_phys =
+                    ((views::TITLE_H + view.height as f32 * s) * platform.scale().max(0.25)) as u32;
+            }
             // Terminal-pane events never reach the OSK bridge (§25).
             if let Some(term) = &terminal {
                 if event_in_terminal_pane(event, keyboard_h_phys) {
@@ -592,6 +675,121 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
                     ui.set_terminal_mode(true);
                     continue;
                 }
+            }
+            // Window gestures: drag the top band to move, the bottom-right
+            // corner to resize. Presses in a grip zone are swallowed (they
+            // never reach the pointer bridge, so no key fires); the gesture
+            // tracks deltas in surface-local pointer coordinates, so no
+            // screen-coordinate knowledge is needed.
+            let win_size = platform.size();
+            let (gw, gh) = (win_size.width, win_size.height);
+            match event {
+                SurfaceEvent::PointerPressed {
+                    x,
+                    y,
+                    button: PointerButton::Left,
+                } => {
+                    let in_resize = x >= (f64::from(gw) - RESIZE_CORNER).max(0.0)
+                        && y >= (f64::from(gh) - RESIZE_CORNER).max(0.0);
+                    // The title strip is 22 logical px tall; the gesture
+                    // band must match it in PHYSICAL px.
+                    let move_band = MOVE_BAND * f64::from(platform.scale());
+                    let in_move = !in_resize && y <= move_band;
+                    if in_move {
+                        let (sx, sy) = platform.surface_position().unwrap_or((0, 0));
+                        gesture = WindowGesture::Move {
+                            win_x: sx,
+                            win_y: sy,
+                            grab_x: x,
+                            grab_y: y,
+                        };
+                        log::debug!("window drag started at ({x:.0},{y:.0})");
+                        continue;
+                    }
+                    if in_resize {
+                        gesture = WindowGesture::Resize {
+                            start_scale: current_view_scale,
+                            grab_x: x,
+                            grab_y: y,
+                        };
+                        log::debug!("window resize started at ({x:.0},{y:.0})");
+                        continue;
+                    }
+                }
+                SurfaceEvent::PointerMoved { x, y } => match gesture {
+                    WindowGesture::Move {
+                        win_x,
+                        win_y,
+                        grab_x,
+                        grab_y,
+                    } => {
+                        // Pointer coordinates are SURFACE-LOCAL: once the
+                        // surface moves, the local frame moves with it, so a
+                        // delta against the press point would lag/jump. The
+                        // gesture tracks the window's own position (updated
+                        // below), so the surface follows pointer − grab
+                        // offset exactly, independent of any surface state
+                        // that might be stale.
+                        let nx = win_x + (x - grab_x) as i32;
+                        let ny = win_y + (y - grab_y) as i32;
+                        log::debug!(
+                            "drag: win=({win_x},{win_y}) ptr=({x:.0},{y:.0}) grab=({grab_x:.0},{grab_y:.0}) -> ({nx},{ny})"
+                        );
+                        if let Err(e) = platform.set_position(nx, ny) {
+                            log::warn!("window move failed: {e}");
+                        }
+                        // Track the target we asked for: the next delta is
+                        // relative to it, so the drag stays exact even if a
+                        // position re-read would be stale.
+                        gesture = WindowGesture::Move {
+                            win_x: nx,
+                            win_y: ny,
+                            grab_x,
+                            grab_y,
+                        };
+                        continue;
+                    }
+                    WindowGesture::Resize {
+                        start_scale,
+                        grab_x,
+                        grab_y,
+                    } => {
+                        // Uniform (diagonal) scaling: the window always
+                        // equals the keyboard scale, so no dead whitespace
+                        // ever grows — dragging right or down scales the WHOLE
+                        // OSK. Scale = start × (pointer distance from the
+                        // fixed top-left corner ÷ distance at grab).
+                        let dist0 = (grab_x * grab_x + grab_y * grab_y).sqrt().max(1.0);
+                        let dist = (x * x + y * y).sqrt();
+                        let mut s = (start_scale * (dist / dist0) as f32)
+                            .clamp(MIN_VIEW_SCALE, MAX_VIEW_SCALE);
+                        // The window must stay on the output.
+                        let ps = platform.scale().max(0.25);
+                        if let Some((out_w, out_h)) = platform.output_bounds() {
+                            let s_max = ((out_w as f32 / view.width as f32)
+                                .min((out_h as f32 - views::TITLE_H) / view.height as f32))
+                            .max(MIN_VIEW_SCALE);
+                            s = s.min(s_max);
+                        }
+                        let win_w = (view.width as f32 * s * ps).round() as u32;
+                        let win_h = ((views::TITLE_H + view.height as f32 * s) * ps).round() as u32;
+                        if let Err(e) = platform.set_size(win_w, win_h) {
+                            log::warn!("window resize failed: {e}");
+                        }
+                        if let Some((cx, cy)) = platform.surface_position() {
+                            let _ = platform.set_position(cx, cy);
+                        }
+                        continue;
+                    }
+                    WindowGesture::Idle => {}
+                },
+                SurfaceEvent::PointerReleased { .. } | SurfaceEvent::TouchReleased { .. }
+                    if !matches!(gesture, WindowGesture::Idle) =>
+                {
+                    gesture = WindowGesture::Idle;
+                    continue;
+                }
+                _ => {}
             }
             bridge.handle_event(&ui, event);
         }
@@ -640,6 +838,9 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
             log::warn!("repeat tick failed: {e}");
         }
 
+        // 4a. Lit-key sync: held/latched/locked modifiers light their caps.
+        sync_lit_keys(&ui, &driver, &mut last_lit);
+
         // 4a. Adaptive geometry: the optimizer runs off the touch hot path,
         // once per UI frame when enough new evidence has accumulated (WS4).
         bridge.tick_adaptive();
@@ -684,17 +885,34 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
             break;
         }
 
-        // 6. Status line refresh (throttled).
+        // 6. Status strip refresh (throttled). The title/status strip is
+        // ALWAYS visible (it doubles as the drag handle): it shows the
+        // daemon link state, and it must clear problem text as soon as the
+        // link is established (it previously stayed stale forever).
         if Instant::now().duration_since(last_status_update) > Duration::from_millis(500) {
             last_status_update = Instant::now();
             if let Some(link) = &system_sink {
                 let link = link.borrow();
-                let label = link.state().label();
-                if !label.is_empty() {
-                    ui.set_status_line(label.into());
-                } else if !detection.detail.is_empty() && !detection.backend.preserves_focus() {
-                    ui.set_status_line(detection.detail.clone().into());
+                let state = link.state();
+                if state == LinkState::Connected {
+                    // On a degraded backend keep the reason visible; on a
+                    // focus-preserving backend a plain "connected" suffices.
+                    let text: slint::SharedString =
+                        if !detection.backend.preserves_focus() && !detection.detail.is_empty() {
+                            detection.detail.clone().into()
+                        } else {
+                            "connected".into()
+                        };
+                    ui.set_status_line(text);
+                    ui.set_status_ok(true);
+                } else {
+                    ui.set_status_line(state.label().into());
+                    ui.set_status_ok(false);
                 }
+            } else {
+                // Terminal-only mode: no daemon link exists by design.
+                ui.set_status_line("terminal workspace".into());
+                ui.set_status_ok(true);
             }
         }
     }
@@ -840,6 +1058,103 @@ fn looks_like_xkb_spec(spec: &str) -> bool {
 /// layout (symbols). The view decides which physical keys are visible, their
 /// widths and any label overrides; the layout decides every symbol; the key
 /// engine (ferrokey-core) is untouched.
+/// Compute the uniform keyboard scale + horizontal offset from the current
+/// window size: the keyboard (`view.width × view.height`) must fit below the
+/// fixed 22px title strip, centered horizontally. Returns (scale, offset_x)
+/// in logical px.
+fn view_transform(win_w: u32, win_h: u32, ps: f32, view: &views::KeyboardView) -> (f32, f32) {
+    let wl = win_w as f32 / ps;
+    let hl = win_h as f32 / ps;
+    let s = (wl / view.width as f32)
+        .min((hl - views::TITLE_H) / view.height as f32)
+        .clamp(MIN_VIEW_SCALE, MAX_VIEW_SCALE);
+    let ox = ((wl - view.width as f32 * s) / 2.0).max(0.0);
+    (s, ox)
+}
+
+/// Apply the window→view transform: set the Slint keyboard placement/scale
+/// properties and the pointer bridge's mapping. Call after the window is
+/// resized (and once at startup). Returns the applied scale.
+fn apply_view_transform(
+    ui: &MainWindow,
+    platform: &FerrokeyPlatform,
+    bridge: &mut pointer::PointerBridge,
+    view: &'static views::KeyboardView,
+) -> f32 {
+    let size = platform.size();
+    let ps = platform.scale().max(0.25);
+    let (s, ox) = view_transform(size.width, size.height, ps, view);
+    ui.set_keyboard_x(ox);
+    ui.set_keyboard_width(view.width as f32 * s);
+    ui.set_keyboard_height(view.height as f32 * s);
+    ui.set_keyboard_scale(s);
+    ui.set_base_width(view.base_width * s);
+    ui.set_key_height(views::VIEW_KEY_HEIGHT * s);
+    ui.set_min_key_width(views::VIEW_MIN_KEY_WIDTH * s);
+    bridge.set_view_transform(s, ox, views::TITLE_H);
+    log::debug!(
+        "view transform: scale {s:.3} offset {ox:.1} (window {}x{})",
+        size.width,
+        size.height
+    );
+    s
+}
+
+/// Push the current modifier-cap lighting to the UI: each modifier is lit
+/// when it is physically held OR latched OR locked, plus Caps/Num lock.
+/// Only pushes when the state changes (per-frame sync is allocation-free).
+fn sync_lit_keys(
+    ui: &MainWindow,
+    driver: &Rc<RefCell<KeyboardDriver>>,
+    last: &mut (bool, bool, bool, bool, bool, bool, bool, bool),
+) {
+    let st = driver.borrow();
+    let state = st.state();
+    let held = |k: ferrokey_core::PhysicalKey| state.depressed().contains(k);
+    let latched = state.latched();
+    let locked = state.locked();
+    let sig = (
+        // Shift lights from a physical hold or a shift LATCH only. The
+        // `locked` SHIFT bit is the Caps Lock mirror, so excluding it keeps
+        // Caps Lock from lighting the shift cap (the caps cap shows it).
+        held(ferrokey_core::PhysicalKey::LeftShift)
+            || held(ferrokey_core::PhysicalKey::RightShift)
+            || latched.contains(ModifierSet::SHIFT),
+        held(ferrokey_core::PhysicalKey::LeftCtrl)
+            || held(ferrokey_core::PhysicalKey::RightCtrl)
+            || latched.contains(ModifierSet::CTRL)
+            || locked.contains(ModifierSet::CTRL),
+        held(ferrokey_core::PhysicalKey::LeftAlt)
+            || latched.contains(ModifierSet::ALT)
+            || locked.contains(ModifierSet::ALT),
+        held(ferrokey_core::PhysicalKey::RightAlt)
+            || latched.contains(ModifierSet::ALTGR)
+            || locked.contains(ModifierSet::ALTGR),
+        held(ferrokey_core::PhysicalKey::LeftMeta)
+            || held(ferrokey_core::PhysicalKey::RightMeta)
+            || latched.contains(ModifierSet::META)
+            || locked.contains(ModifierSet::META),
+        held(ferrokey_core::PhysicalKey::Menu)
+            || latched.contains(ModifierSet::FN)
+            || locked.contains(ModifierSet::FN),
+        state.caps_lock(),
+        state.num_lock(),
+    );
+    if sig != *last {
+        *last = sig;
+        ui.set_lit_state(LitState {
+            shift: sig.0,
+            ctrl: sig.1,
+            alt: sig.2,
+            altgr: sig.3,
+            meta: sig.4,
+            fn_key: sig.5,
+            caps: sig.6,
+            num: sig.7,
+        });
+    }
+}
+
 fn set_keyboard_view(ui: &MainWindow, layout: &ferrokey_core::Layout, view: &views::KeyboardView) {
     use slint::VecModel;
 
@@ -849,6 +1164,16 @@ fn set_keyboard_view(ui: &MainWindow, layout: &ferrokey_core::Layout, view: &vie
             .keys
             .iter()
             .map(|vk| {
+                // The logo button renders the embedded brand image, never a
+                // label or a key event (decorative key, views.rs).
+                if vk.logo {
+                    return KeyData {
+                        name: vk.name.into(),
+                        label: "".into(),
+                        width: vk.width,
+                        is_logo: true,
+                    };
+                }
                 // Chord keys (terminal shortcut row) carry their display name
                 // as the label; the bridge plays the chord, never a key event
                 // for the placeholder name.
@@ -870,6 +1195,7 @@ fn set_keyboard_view(ui: &MainWindow, layout: &ferrokey_core::Layout, view: &vie
                     name: vk.name.into(),
                     label: label.into(),
                     width: vk.width,
+                    is_logo: false,
                 }
             })
             .collect();
@@ -908,6 +1234,7 @@ fn set_terminal_shortcut_row(
                 name: k.label.into(),
                 label: k.label.into(),
                 width: 1.25,
+                is_logo: false,
             })
             .collect(),
         // Fall back to the static shortcut row (the first terminal row).
@@ -921,6 +1248,7 @@ fn set_terminal_shortcut_row(
                         name: vk.name.into(),
                         label: vk.name.into(),
                         width: vk.width,
+                        is_logo: false,
                     })
                     .collect()
             })

@@ -1,0 +1,28 @@
+# Ferrokey on-screen keyboard — desktop entry (launcher/taskbar icon).
+#
+# INSTALL
+#   Install the ferrokey binary at ${prefix}/bin/ferrokey, then:
+#     install -Dm 0644 PACKAGING/ferrokey.desktop ${prefix}/share/applications/ferrokey.desktop
+#     install -Dm 0644 PACKAGING/icons/ferrokey.svg \
+#       ${prefix}/share/icons/hicolor/scalable/apps/ferrokey.svg
+#     (icon cache: gtk-update-icon-cache ${prefix}/share/icons/hicolor || true)
+#
+#   With ${prefix}=/usr the OSK shows up in the application menu and in
+#   taskbar/alt-tab launchers under its own icon. Note the OSK window itself
+#   deliberately never appears in the taskbar (layer-shell
+#   keyboard_interactivity=none / WM_HINTS.input=False): the tray item
+#   (StatusNotifierItem) is the runtime handle for show/hide.
+#
+#   The desktop entry is a launcher; the OSK is started unprivileged by the
+#   desktop user, exactly like any other app.
+[Desktop Entry]
+Type=Application
+Name=Ferrokey
+GenericName=On-screen keyboard
+Comment=On-screen keyboard with terminal workspace
+Exec=ferrokey
+Icon=ferrokey
+Terminal=false
+Categories=Utility;Accessibility;
+Keywords=keyboard;osk;accessibility;terminal;
+StartupNotify=false

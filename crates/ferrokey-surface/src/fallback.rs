@@ -41,6 +41,19 @@ impl Surface for NullSurface {
         Ok(())
     }
 
+    fn set_position(&mut self, _x: i32, _y: i32) -> Result<(), SurfaceError> {
+        // No display: nothing to move.
+        Ok(())
+    }
+
+    fn position(&self) -> Option<(i32, i32)> {
+        None
+    }
+
+    fn output_bounds(&self) -> Option<(u32, u32)> {
+        None
+    }
+
     fn present(
         &mut self,
         _buffer: &[u8],

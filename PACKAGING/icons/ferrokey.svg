@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Ferrokey launcher icon: an on-screen keyboard glyph. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c222b"/>
+      <stop offset="1" stop-color="#111418"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#bg)"/>
+  <rect x="20" y="34" width="88" height="60" rx="8" fill="#262b33" stroke="#3a4049" stroke-width="2"/>
+  <!-- top row -->
+  <rect x="26" y="40" width="12" height="10" rx="2" fill="#3a4049"/>
+  <rect x="42" y="40" width="12" height="10" rx="2" fill="#3a4049"/>
+  <rect x="58" y="40" width="12" height="10" rx="2" fill="#3a4049"/>
+  <rect x="74" y="40" width="12" height="10" rx="2" fill="#3a4049"/>
+  <rect x="90" y="40" width="12" height="10" rx="2" fill="#4a7fb8"/>
+  <!-- second row -->
+  <rect x="26" y="54" width="12" height="10" rx="2" fill="#3a4049"/>
+  <rect x="42" y="54" width="12" height="10" rx="2" fill="#3a4049"/>
+  <rect x="58" y="54" width="12" height="10" rx="2" fill="#3a4049"/>
+  <rect x="74" y="54" width="12" height="10" rx="2" fill="#3a4049"/>
+  <rect x="90" y="54" width="12" height="10" rx="2" fill="#4a7fb8"/>
+  <!-- third row -->
+  <rect x="26" y="68" width="20" height="10" rx="2" fill="#3a4049"/>
+  <rect x="50" y="68" width="12" height="10" rx="2" fill="#3a4049"/>
+  <rect x="66" y="68" width="12" height="10" rx="2" fill="#3a4049"/>
+  <rect x="82" y="68" width="20" height="10" rx="2" fill="#4a7fb8"/>
+  <!-- bottom row: wide space bar -->
+  <rect x="26" y="82" width="34" height="6" rx="2" fill="#3a4049"/>
+  <rect x="64" y="82" width="22" height="6" rx="2" fill="#3a4049"/>
+  <rect x="90" y="82" width="12" height="6" rx="2" fill="#4a7fb8"/>
+</svg>

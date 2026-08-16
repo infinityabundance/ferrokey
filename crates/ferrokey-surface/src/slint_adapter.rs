@@ -141,6 +141,33 @@ impl FerrokeyPlatform {
         Ok(())
     }
 
+    /// The OSK's current size (physical px).
+    pub fn size(&self) -> PhysicalSize {
+        self.size.get()
+    }
+
+    /// Move the OSK window (top-left to `(x, y)` in output coordinates).
+    /// The no-focus contract is untouched: the surface stays
+    /// `keyboard_interactivity = none` / `WM_HINTS.input = False`.
+    pub fn set_position(&self, x: i32, y: i32) -> Result<(), PlatformError> {
+        self.surface
+            .borrow_mut()
+            .set_position(x, y)
+            .map_err(|e| PlatformError::Other(e.to_string()))
+    }
+
+    /// The OSK window's current top-left position (output coordinates),
+    /// when the backend can determine it.
+    pub fn surface_position(&self) -> Option<(i32, i32)> {
+        self.surface.borrow().position()
+    }
+
+    /// The output's physical size, when the backend knows it (used to keep
+    /// the OSK fully on-screen while moving/resizing).
+    pub fn output_bounds(&self) -> Option<(u32, u32)> {
+        self.surface.borrow().output_bounds()
+    }
+
     /// Show/hide the OSK.
     pub fn set_visible(&self, visible: bool) -> Result<(), PlatformError> {
         if visible {

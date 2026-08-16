@@ -17,3 +17,4 @@ repeat:
   enabled: true
   delay_ms: 500
   cadence_ms: 30
+scale: 1.0

@@ -11,9 +11,8 @@ stateDiagram-v2
         HeldMod --> Latched: release (tap, latch_enabled)
         Latched --> Consumed: next qualifying key press [latched cleared]
         Consumed --> [*]
-        Latched --> Locked: release double-tap (lock_enabled)
-        HeldMod --> Locked: double-tap release
-        Locked --> Unlocked: double-tap release [toggle]
+        Latched --> Up: tap on the active modifier [disengaged]
+        Locked --> Up: tap on the active modifier [disengaged]
         Locked --> [*]
     }
 

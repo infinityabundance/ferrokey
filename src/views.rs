@@ -27,12 +27,18 @@ pub const VIEW_KEY_HEIGHT: f32 = 52.0;
 /// Minimum rendered key width (logical px). Never reached at the shipped
 /// base widths; guards degenerate custom widths.
 pub const VIEW_MIN_KEY_WIDTH: f32 = 24.0;
+/// The title/status strip height (logical px). The OSK window is this strip
+/// PLUS the keyboard view: the strip is the drag handle and shows the daemon
+/// link state. The key geometry in this module is the KEYBOARD space only
+/// (no strip offset); the window/pointer layer maps through the strip.
+pub const TITLE_H: f32 = 22.0;
 
 /// One key in a view row.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ViewKey {
     /// Physical key name (see [`PhysicalKey::name`]). For chord keys this is
-    /// a display placeholder (the chord is what matters).
+    /// a display placeholder (the chord is what matters); for the logo key it
+    /// is a decorative placeholder that maps to no physical key.
     pub name: &'static str,
     /// Width factor relative to the view's base key width.
     pub width: f32,
@@ -45,6 +51,9 @@ pub struct ViewKey {
     /// produces a genuine Ctrl+C through the core state machine — never an
     /// internal shell-command macro, §57).
     pub chord: Option<&'static [&'static str]>,
+    /// Decorative logo button: renders the embedded brand image instead of a
+    /// label and maps to no physical key (the pointer bridge ignores it).
+    pub logo: bool,
 }
 
 impl ViewKey {
@@ -54,6 +63,7 @@ impl ViewKey {
             width,
             label: None,
             chord: None,
+            logo: false,
         }
     }
 
@@ -63,6 +73,7 @@ impl ViewKey {
             width,
             label: Some(label),
             chord: None,
+            logo: false,
         }
     }
 
@@ -72,6 +83,20 @@ impl ViewKey {
             width,
             label: Some(name),
             chord: Some(chord),
+            logo: false,
+        }
+    }
+
+    /// A decorative logo button (brand mark, e.g. next to F12). Maps to no
+    /// physical key: the pointer bridge never turns it into a key event and
+    /// it is excluded from the adaptive-geometry interaction model.
+    pub const fn logo(name: &'static str, width: f32) -> Self {
+        ViewKey {
+            name,
+            width,
+            label: None,
+            chord: None,
+            logo: true,
         }
     }
 }
@@ -205,16 +230,23 @@ pub fn adaptive_geometry_basis(
     for (r, row) in view.rows.iter().enumerate() {
         let mut x = VIEW_PAD;
         for key in row.keys {
+            // Decorative keys (the logo) are not interaction targets: they
+            // must never accumulate touch evidence or compete for space.
+            let interactive = !key.logo
+                && (key.chord.is_some()
+                    || ferrokey_core::PhysicalKey::from_name(key.name).is_some());
             let w = key_width(view, key.width);
-            let y = VIEW_PAD + r as f32 * (VIEW_KEY_HEIGHT + VIEW_SPACING);
-            rects.push(Rect::new(
-                f64::from(x),
-                f64::from(y),
-                f64::from(w),
-                f64::from(VIEW_KEY_HEIGHT),
-            ));
-            names.push(key.name);
-            row_of.push(r);
+            if interactive {
+                let y = VIEW_PAD + r as f32 * (VIEW_KEY_HEIGHT + VIEW_SPACING);
+                rects.push(Rect::new(
+                    f64::from(x),
+                    f64::from(y),
+                    f64::from(w),
+                    f64::from(VIEW_KEY_HEIGHT),
+                ));
+                names.push(key.name);
+                row_of.push(r);
+            }
             x += w + VIEW_SPACING;
         }
     }
@@ -259,8 +291,8 @@ pub const VIEW_IDS: &[&str] = &["compact", "full", "terminal"];
 static COMPACT: KeyboardView = KeyboardView {
     id: "compact",
     name: "Compact",
-    width: 920,
-    height: 342,
+    width: 936,
+    height: 354,
     base_width: 58.0,
     rows: &[
         ViewRow {
@@ -278,6 +310,10 @@ static COMPACT: KeyboardView = KeyboardView {
                 ViewKey::new("f10", 1.0),
                 ViewKey::new("f11", 1.0),
                 ViewKey::new("f12", 1.0),
+                // The brand mark sits next to F12: launcher identity on the
+                // board itself. Decorative: no physical key, ignored by the
+                // pointer bridge, excluded from adaptive geometry.
+                ViewKey::logo("logo", 0.9),
             ],
         },
         ViewRow {
@@ -346,7 +382,12 @@ static COMPACT: KeyboardView = KeyboardView {
                 ViewKey::new("comma", 1.0),
                 ViewKey::new("dot", 1.0),
                 ViewKey::new("slash", 1.0),
-                ViewKey::new("right-shift", 1.6),
+                // Arrow cluster (compact): the up arrow sits directly above
+                // down, same size (the space bar is 5.0 so the bottom-row
+                // cluster aligns with the up key above it). left/down/right
+                // replace right-shift/right-ctrl — the compact OSK keeps a
+                // single shift and ctrl, each on the left.
+                ViewKey::new("up", 1.0),
             ],
         },
         ViewRow {
@@ -354,11 +395,18 @@ static COMPACT: KeyboardView = KeyboardView {
                 ViewKey::new("left-ctrl", 1.0),
                 ViewKey::new("left-meta", 1.0),
                 ViewKey::new("left-alt", 1.0),
-                ViewKey::new("space", 6.0),
+                // 4.9 (the compact default): the bottom-row arrow cluster
+                // then sits EXACTLY under the up key on the row above
+                // (same-size keys; row-5 has two more keys/gaps than row-6,
+                // which the shorter space bar compensates).
+                ViewKey::new("space", 4.9),
                 ViewKey::new("right-alt", 1.0),
                 ViewKey::new("compose", 1.0),
                 ViewKey::new("menu", 1.0),
-                ViewKey::new("right-ctrl", 1.0),
+                // Arrow cluster (compact): left/down/right replace right-ctrl.
+                ViewKey::new("left", 1.0),
+                ViewKey::new("down", 1.0),
+                ViewKey::new("right", 1.0),
             ],
         },
     ],
@@ -533,8 +581,8 @@ static FULL: KeyboardView = KeyboardView {
 static TERMINAL: KeyboardView = KeyboardView {
     id: "terminal",
     name: "Terminal",
-    width: 920,
-    height: 342,
+    width: 936,
+    height: 354,
     base_width: 58.0,
     rows: &[
         // Shortcut row: chords, never shell-command macros (§55, §57).
@@ -655,7 +703,8 @@ mod tests {
                 for key in row.keys {
                     // Chord keys are played by the bridge as sequences of
                     // physical keys; their own names are display placeholders.
-                    if key.chord.is_some() {
+                    // Logo keys are decorative (no physical key by design).
+                    if key.chord.is_some() || key.logo {
                         continue;
                     }
                     assert!(
@@ -664,6 +713,25 @@ mod tests {
                         view.id,
                         key.name
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_logo_key_is_decorative() {
+        for view in VIEWS {
+            for row in view.rows {
+                for key in row.keys {
+                    if key.logo {
+                        assert_eq!(key.chord, None, "logo keys carry no chord");
+                        assert_eq!(key.label, None, "logo keys carry no label");
+                        assert!(
+                            PhysicalKey::from_name(key.name).is_none(),
+                            "logo key {:?} must not shadow a physical key",
+                            key.name
+                        );
+                    }
                 }
             }
         }
@@ -799,10 +867,24 @@ mod tests {
         };
         assert_eq!(key_center(v, row("a"), col("a")), (133.8, 206.0));
         assert_eq!(key_center(v, row("e"), col("e")), (261.8, 148.0));
-        assert_eq!(key_center(v, row("space"), col("space")), (372.0, 322.0));
+        assert_eq!(key_center(v, row("space"), col("space")), (340.1, 322.0));
         assert_eq!(
             key_center(v, row("apostrophe"), col("apostrophe")),
             (773.8, 206.0)
+        );
+        // The compact arrow cluster: up sits directly above down, same size
+        // (sub-pixel residual comes from the row key-count asymmetry: row 5
+        // carries two more keys/gaps before the cluster than row 6).
+        let up = key_center(v, row("up"), col("up"));
+        let down = key_center(v, row("down"), col("down"));
+        assert!(
+            (up.0 - down.0).abs() <= 1.0,
+            "up ({up:?}) must be centered over down ({down:?})"
+        );
+        let above = up.1 + VIEW_KEY_HEIGHT + VIEW_SPACING;
+        assert!(
+            (above - down.1).abs() <= 1.0,
+            "up must sit directly above down ({up:?} vs {down:?})"
         );
     }
 

@@ -1,7 +1,7 @@
 [package]
 name = "ferrokey-uinput"
 description = "Ferrokey uinput device: explicit capability set, event emission, defensive held-key ledger"
-version.workspace = true
+version = "0.1.3"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

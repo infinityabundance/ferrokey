@@ -15,31 +15,81 @@ export struct KeyData {
     label: string,
     /// Relative width factor (space is wider than a letter).
     width: float,
+    /// Decorative brand button (the logo next to F12): renders the embedded
+    /// image instead of the label; maps to no physical key.
+    is-logo: bool,
+}
+
+/// Which modifier caps should stay lit: physically held, latched or locked
+/// modifiers, plus Caps/Num lock. Driven by Rust from the keyboard state
+/// (slint 1.17 has no array indexOf, so a struct of bools is the reactive,
+/// allocation-free way to light keys).
+export struct LitState {
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+    altgr: bool,
+    meta: bool,
+    fn-key: bool,
+    caps: bool,
+    num: bool,
 }
 
 export component Key inherits Rectangle {
-    in property <KeyData> key-data: { name: "", label: "", width: 1.0 };
+    in property <KeyData> key-data: { name: "", label: "", width: 1.0, is-logo: false };
     in property <length> base-width: 58px;
+    /// Scaled key height and minimum width (set by the Keyboard from its
+    /// `scale`), so the whole OSK scales with the window.
+    in property <length> key-height: 52px;
+    in property <length> min-key-width: 24px;
+    /// Label font scale (the Keyboard's uniform scale): labels must shrink
+    /// with the keys or long labels (backspace/enter) would spill over.
+    in property <float> label-scale: 1.0;
+    /// Keys whose caps should stay lit (held / latched / locked modifiers).
+    in property <LitState> lit-state: { shift: false, ctrl: false, alt: false, altgr: false, meta: false, fn-key: false, caps: false, num: false };
 
     property <bool> down: false;
+    /// Lit = the key's own momentary down state OR its modifier is logically
+    /// active (held / latched / locked).
+    property <bool> lit: ((key-data.name == "left-shift" || key-data.name == "right-shift") && root.lit-state.shift)
+        || ((key-data.name == "left-ctrl" || key-data.name == "right-ctrl") && root.lit-state.ctrl)
+        || (key-data.name == "left-alt" && root.lit-state.alt)
+        || (key-data.name == "right-alt" && root.lit-state.altgr)
+        || ((key-data.name == "left-meta" || key-data.name == "right-meta") && root.lit-state.meta)
+        || (key-data.name == "menu" && root.lit-state.fn-key)
+        || (key-data.name == "caps-lock" && root.lit-state.caps)
+        || (key-data.name == "num-lock" && root.lit-state.num);
 
-    width: max(24px, key-data.width * root.base-width);
-    height: 52px;
+    clip: true;
+    width: max(root.min-key-width, key-data.width * root.base-width);
+    height: root.key-height;
     border-radius: 8px;
-    background: down ? #4a7fb8 : #262b33;
+    background: (down || root.lit) ? #4a7fb8 : #262b33;
     border-width: 1px;
-    border-color: down ? #6a9fd0 : #3a4049;
+    border-color: (down || root.lit) ? #6a9fd0 : #3a4049;
     drop-shadow-blur: 4px;
     drop-shadow-color: #00000066;
     drop-shadow-offset-y: 2px;
 
-    Text {
+    // The brand mark (embedded at compile time from assets/ferrokey.png):
+    // centered, sized to the key, scaled with the keyboard. The logo key is
+    // decorative — the pointer bridge never turns it into a key event.
+    if root.key-data.is-logo: Image {
+        source: @image-url("../assets/ferrokey.png");
+        image-fit: contain;
+        width: root.height * 0.66;
+        height: root.height * 0.66;
+        x: (root.width - root.height * 0.66) / 2;
+        y: (root.height - root.height * 0.66) / 2;
+    }
+
+    if !root.key-data.is-logo: Text {
         text: key-data.label;
         color: #e8eaed;
-        font-size: 17px;
+        font-size: 17px * root.label-scale;
         horizontal-alignment: center;
         vertical-alignment: center;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.5px * root.label-scale;
     }
 
     // Visual feedback only — never the semantic path (see the header note).

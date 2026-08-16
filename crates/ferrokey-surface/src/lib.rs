@@ -161,6 +161,21 @@ pub trait Surface {
     /// Resize the surface.
     fn set_size(&mut self, width: u32, height: u32) -> Result<(), SurfaceError>;
 
+    /// Move the surface's top-left corner to (x, y) in output coordinates
+    /// (logical pixels on Wayland, root coordinates on X11). Backends that
+    /// cannot position a surface (the null fallback) treat this as a no-op.
+    /// Implementations clamp to the output; the compositor may also constrain.
+    fn set_position(&mut self, x: i32, y: i32) -> Result<(), SurfaceError>;
+
+    /// The surface's current top-left position (output coordinates), if the
+    /// backend can determine it. `None` = unknown (e.g. Wayland before the
+    /// output size is known, or the null fallback).
+    fn position(&self) -> Option<(i32, i32)>;
+
+    /// The output's size in physical pixels, when known. Used to keep the
+    /// surface fully on-screen when it is moved or resized.
+    fn output_bounds(&self) -> Option<(u32, u32)>;
+
     /// Present a rendered frame. `buffer` holds `width * height`
     /// [`slint::platform::software_renderer::PremultipliedRgbaColor`]s
     /// (memory order R,G,B,A); `stride` is the row stride **in bytes**

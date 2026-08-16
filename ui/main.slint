@@ -1,6 +1,6 @@
 // main.slint — the Ferrokey OSK root.
 //
-// Renders the keyboard plus a status line. Window semantics (no-focus
+// Renders the keyboard plus a title/status strip. Window semantics (no-focus
 // guarantees) come from ferrokey-surface, never from this file.
 //
 // The `key-pressed`/`key-released` callbacks are declared here but never
@@ -11,19 +11,23 @@
 // owns key semantics; this file only declares the interface.
 //
 // Terminal workspace mode (Phase 3 addendum #2): the window grows taller,
-// the keyboard stays fixed at the top (`keyboard-height`), and the embedded
-// PTY terminal pane renders below it as an opaque RGBA image produced by
-// ferrokey-terminal. The terminal pane has NO TouchArea: all pane input is
-// routed by the Rust terminal-input bridge (src/term_input.rs), so a pane
-// gesture can never grab the pointer away from the OSK (§25).
+// the keyboard stays at the top, and the embedded PTY terminal pane renders
+// below it as an opaque RGBA image produced by ferrokey-terminal. The
+// terminal pane has NO TouchArea: all pane input is routed by the Rust
+// terminal-input bridge (src/term_input.rs), so a pane gesture can never
+// grab the pointer away from the OSK (§25).
 
 import { Keyboard } from "keyboard.slint";
-import { KeyData } from "key.slint";
+import { KeyData, LitState } from "key.slint";
 
 export component MainWindow inherits Window {
     in property <bool> degraded: false;
     in property <string> status-line: "";
+    in property <bool> status-ok: false;
     in property <string> pending-label: "";
+    /// Keys whose caps should stay lit (held / latched / locked modifiers;
+    /// driven by Rust from the keyboard state).
+    in property <LitState> lit-state: { shift: false, ctrl: false, alt: false, altgr: false, meta: false, fn-key: false, caps: false, num: false };
     in property <bool> text-mode: false;
     in property <[KeyData]> row1: [];
     in property <[KeyData]> row2: [];
@@ -33,10 +37,18 @@ export component MainWindow inherits Window {
     in property <[KeyData]> row6: [];
     in property <[KeyData]> row7: [];
     in property <length> base-width: 58px;
+    // Keyboard placement + uniform scale (driven by Rust from the window
+    // size; 1.0 = the view's natural size). The window is the fixed title
+    // strip (22px) plus the scaled keyboard.
+    in property <length> keyboard-x: 0px;
+    in property <length> keyboard-width: 920px;
+    in property <float> keyboard-scale: 1.0;
+    in property <length> key-height: 52px;
+    in property <length> min-key-width: 24px;
 
     // Terminal workspace mode.
     in property <bool> terminal-mode: false;
-    /// OSK height (logical px) — the keyboard never changes size.
+    /// OSK height (logical px) — the keyboard's scaled height.
     in property <length> keyboard-height: 342px;
     /// Terminal pane height (logical px).
     in property <length> terminal-height: 420px;
@@ -50,13 +62,17 @@ export component MainWindow inherits Window {
     /// Toggle the input destination (SYSTEM ↔ TERMINAL); wired in Rust.
     callback destination-switch();
 
-    background: #111418;
+    // Transparent background: the desktop shows through the gaps between
+    // keys (the keys and the title strip are opaque).
+    background: transparent;
     title: "Ferrokey";
     no-frame: true;
-    width: 920px;
-    height: root.keyboard-height + (root.terminal-mode ? root.terminal-height : 0px);
 
     Keyboard {
+        x: root.keyboard-x;
+        y: 22px;
+        width: root.keyboard-width;
+        height: root.keyboard-height;
         degraded: root.degraded;
         row1: root.row1;
         row2: root.row2;
@@ -66,12 +82,55 @@ export component MainWindow inherits Window {
         row6: root.row6;
         row7: root.row7;
         base-width: root.base-width;
-        height: root.keyboard-height;
+        scale: root.keyboard-scale;
+        key-height: root.key-height;
+        min-key-width: root.min-key-width;
+        lit-state: root.lit-state;
+    }
+
+    // Title/status strip — ALWAYS visible. Doubles as the drag handle for
+    // the window-gesture layer (src/main.rs, MOVE_BAND), so the OSK reads as
+    // a normal window: grab it to move. It is a fixed strip ABOVE the
+    // keyboard (the keyboard starts at y=22), so nothing is ever cropped.
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: 22px;
+        background: #14171c;
+        Text {
+            x: 10px;
+            width: 110px;
+            height: 22px;
+            vertical-alignment: center;
+            text: "Ferrokey";
+            color: #8b949e;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        Text {
+            x: 0px;
+            width: root.width;
+            height: 22px;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            text: root.status-line;
+            color: root.status-ok ? #7ee787 : #e06c75;
+            font-size: 11px;
+        }
+        // Bottom border separating the strip from the keyboard.
+        Rectangle {
+            x: 0px;
+            y: 21px;
+            width: root.width;
+            height: 1px;
+            background: #2a3038;
+        }
     }
 
     // The embedded terminal pane (image-only; input is routed by Rust).
     if root.terminal-mode: Rectangle {
-        y: root.keyboard-height;
+        y: 22px + root.keyboard-height;
         width: root.width;
         height: root.terminal-height;
         background: #111418;
@@ -95,7 +154,7 @@ export component MainWindow inherits Window {
     // may grab the pointer (§112).
     if root.terminal-mode: TouchArea {
         x: root.width - 92px;
-        y: root.keyboard-height + 4px;
+        y: 22px + root.keyboard-height + 4px;
         width: 84px;
         height: 18px;
         clicked => { root.destination-switch(); }
@@ -116,22 +175,16 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Status line. Deliberately an OVERLAY (not a layout child): the key
-    // geometry must never shift when a status message appears, or pointer
-    // targeting (and the courts' fixed key coordinates) would break.
-    if root.status-line != "": Rectangle {
-        x: 0px;
-        y: 0px;
-        width: root.width;
-        height: 22px;
-        background: #1b2027;
-        Text {
-            text: root.status-line;
-            color: #c9d1d9;
-            font-size: 12px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
+    // Resize grip (bottom-right corner) — visual only; the gesture is
+    // hit-tested by the Rust window-gesture layer (RESIZE_CORNER). Hidden in
+    // terminal mode: there the corner belongs to the terminal pane.
+    if !root.terminal-mode: Rectangle {
+        x: root.width - 16px;
+        y: root.height - 16px;
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        background: #3a4049;
     }
 
     // Compose-state hint. Deliberately an OVERLAY (not a layout child): the
@@ -139,7 +192,7 @@ export component MainWindow inherits Window {
     // targeting (and the courts' fixed key coordinates) would break.
     if root.pending-label != "": Rectangle {
         x: (root.width - 220px) / 2;
-        y: 2px;
+        y: 24px;
         width: 220px;
         height: 22px;
         background: #26303a;

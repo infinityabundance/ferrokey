@@ -1,7 +1,7 @@
 [package]
 name = "ferrokey-protocol"
 description = "Ferrokey wire protocol: length-prefixed binary messages between ferrokey (UI) and ferrokeyd"
-version.workspace = true
+version = "0.1.3"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

@@ -10,8 +10,8 @@
 //!   symbolic and the verification exponential, so the universe is small —
 //!   the invariant set is what matters, not the key count.)
 //! * **Time** is `ferrokey_core::time::Moment` (a plain millisecond tick),
-//!   bounded to the tap/latch/lock windows, so the timing branches
-//!   (tap vs long-press vs double-tap) are explored symbolically.
+//!   bounded to the tap/latch windows, so the timing branches
+//!   (tap vs long-press) are explored symbolically.
 //!
 //! Proof IDs: KANI.HELD.001, KANI.RELEASE.001, KANI.REPEAT.001,
 //! KANI.ROLLOVER.001, KANI.RELEASEALL.001, KANI.LATCH.001, KANI.LOCK.001,
@@ -23,7 +23,8 @@
 #[cfg(kani)]
 mod proofs {
     use ferrokey_core::{
-        KeyEvent, KeyboardState, Moment, RepeatEngine, RepeatSettings, StateError, StateSettings,
+        KeyEvent, KeyboardState, ModifierSet, Moment, RepeatEngine, RepeatSettings, StateError,
+        StateSettings,
     };
     use std::time::Duration;
 
@@ -66,20 +67,19 @@ mod proofs {
 
     /// A moment chosen from a two-value timing domain.
     ///
-    /// The latch/lock logic decides purely by strict comparisons against two
-    /// thresholds (`tap_timeout` 400 ms, `double_tap_timeout` 500 ms):
+    /// The latch logic decides purely by a strict comparison against the tap
+    /// threshold (`tap_timeout` 400 ms):
     ///
     /// ```text
     /// duration < 400  ⇒  tap        duration ≥ 400  ⇒  hold
-    /// duration < 500  ⇒  double     duration ≥ 500  ⇒  single
     /// ```
     ///
-    /// `0 ms` represents every duration below both thresholds, `900 ms`
-    /// every duration at/above both — so the two-value domain samples every
-    /// region the implementation can distinguish. Fully symbolic `u64`
-    /// moments would make CBMC bit-blast 64-bit arithmetic for no extra
-    /// semantic coverage and exhaust the solver (the observable timing
-    /// behavior is identical for every value inside a region).
+    /// `0 ms` represents every duration below the threshold, `900 ms` every
+    /// duration at/above it — so the two-value domain samples every region
+    /// the implementation can distinguish. Fully symbolic `u64` moments would
+    /// make CBMC bit-blast 64-bit arithmetic for no extra semantic coverage
+    /// and exhaust the solver (the observable timing behavior is identical
+    /// for every value inside a region).
     fn symbolic_moment() -> Moment {
         let v = kani::any::<u8>();
         kani::assume(v <= 1);
@@ -242,38 +242,24 @@ mod proofs {
         );
     }
 
-    // ── KANI.LOCK.001: lock semantics (double-tap only) ───────────────────
+    // ── KANI.LOCK.001: lock semantics (Caps Lock key; taps toggle) ───────
 
     #[kani::proof]
     pub fn kani_lock_semantics() {
-        let settings = StateSettings::default(); // double_tap_timeout 500ms
-        let m = ferrokey_core::PhysicalKey::LeftShift;
-        let kind = m.modifier_kind().unwrap();
+        let settings = StateSettings::default();
 
+        // Lock enters ONLY through the Caps Lock key's tap: release of the
+        // CapsLock key toggles caps_lock and mirrors it into locked SHIFT.
         let mut s = KeyboardState::new(settings);
-        // First tap (must be within the tap timeout to count at all).
-        let d1 = symbolic_moment();
-        let u1 = symbolic_moment();
-        kani::assume(u1 >= d1 && u1.saturating_duration_since(d1) < settings.tap_timeout);
-        let _ = s.press(m, d1);
-        let _ = s.release(m, u1);
+        let _ = s.press(ferrokey_core::PhysicalKey::CapsLock, Moment::from_millis(1));
+        let _ = s.release(
+            ferrokey_core::PhysicalKey::CapsLock,
+            Moment::from_millis(51),
+        );
+        assert!(s.caps_lock());
+        assert!(s.locked().contains(ModifierSet::SHIFT));
 
-        // Second tap: double-tap iff within the double-tap window.
-        let d2 = symbolic_moment();
-        let u2 = symbolic_moment();
-        kani::assume(u2 >= d2 && u2.saturating_duration_since(d2) < settings.tap_timeout);
-        let _ = s.press(m, d2);
-        let _ = s.release(m, u2);
-
-        let is_double = u2.saturating_duration_since(u1) < settings.double_tap_timeout;
-        if is_double {
-            assert!(s.locked().contains(kind.into()));
-        } else {
-            assert!(!s.locked().contains(kind.into()));
-        }
-
-        // Ordinary key activity cannot invent lock state: press/release
-        // letter keys repeatedly on a fresh state — the lock set stays empty.
+        // Ordinary key activity cannot invent lock state.
         let mut s2 = KeyboardState::new(settings);
         for i in 0..4u32 {
             let t = Moment::from_millis(u64::from(i) * 100 + 1);
@@ -281,6 +267,56 @@ mod proofs {
             let _ = s2.release(letter_key(), t + Duration::from_millis(20));
         }
         assert!(s2.locked().is_empty());
+        assert!(!s2.caps_lock());
+
+        // Unlock follows the defined transition: another Caps Lock tap.
+        let mut s3 = KeyboardState::new(settings);
+        let _ = s3.press(ferrokey_core::PhysicalKey::CapsLock, Moment::from_millis(1));
+        let _ = s3.release(
+            ferrokey_core::PhysicalKey::CapsLock,
+            Moment::from_millis(51),
+        );
+        assert!(s3.caps_lock());
+        let _ = s3.press(
+            ferrokey_core::PhysicalKey::CapsLock,
+            Moment::from_millis(101),
+        );
+        let _ = s3.release(
+            ferrokey_core::PhysicalKey::CapsLock,
+            Moment::from_millis(151),
+        );
+        assert!(!s3.caps_lock());
+        assert!(s3.locked().is_empty());
+
+        // Click-to-toggle: tapping an already-active modifier disengages it
+        // and never invents lock state (Shift double-taps used to map to
+        // Caps Lock; that gesture now just latches then disengages).
+        let mut s4 = KeyboardState::new(settings);
+        let m = ferrokey_core::PhysicalKey::LeftShift;
+        let kind = m.modifier_kind().unwrap();
+        let _ = s4.press(m, Moment::from_millis(1));
+        let _ = s4.release(m, Moment::from_millis(51));
+        assert!(s4.latched().contains(kind.into()));
+        let _ = s4.press(m, Moment::from_millis(101));
+        let _ = s4.release(m, Moment::from_millis(151));
+        assert!(!s4.latched().contains(kind.into()));
+        assert!(s4.locked().is_empty());
+        assert!(!s4.caps_lock());
+
+        // release_all cannot leave a physically stuck modifier; the lock is
+        // logical state and persists (like a physical keyboard's LED).
+        let mut s5 = KeyboardState::new(settings);
+        let _ = s5.press(ferrokey_core::PhysicalKey::CapsLock, Moment::from_millis(1));
+        let _ = s5.release(
+            ferrokey_core::PhysicalKey::CapsLock,
+            Moment::from_millis(51),
+        );
+        let _ = s5.press(letter_key(), Moment::from_millis(101));
+        let _ = s5.release_all();
+        assert!(s5.depressed().is_empty());
+        assert!(s5.latched().is_empty());
+        assert!(s5.caps_lock(), "caps lock is logical state and persists");
+        assert!(s5.locked().contains(ModifierSet::SHIFT));
     }
 
     // ── KANI.SEQUENCE.001: bounded symbolic operation sequences ───────────

@@ -2,7 +2,7 @@
   "tool": "kani",
   "tool_version": "0.67.0",
   "rustc": "1.93.0-nightly (2025-11-21, kani 0.67 bundled)",
-  "commit": "ed637c612cbe822625c9685eb6734cf2512d239f",
+  "commit": "e620e6c1da7dccea003b8a7c20ba10fcf9fc034a",
   "verification_note": "verified inside the ferrokey-kani container in a disposable copy with only the rust-version declaration adjusted to the kani bundled toolchain; the verified code is byte-identical to production (the field does not affect codegen). Loops are bounded by --unwind 33 with --unwinding-assertions: every verified loop has a constant trip bound <= 32 (the fixed-capacity core), so any loop exceeding the bound fails the proof loudly instead of truncating silently.",
   "proofs": [
     {

@@ -36,8 +36,8 @@ impl ModifierKind {
         }
     }
 
-    /// The 0-based index of this modifier — for fixed-size per-kind tables
-    /// (the state machine's `last_tap`), in declaration order.
+    /// The 0-based index of this modifier — for fixed-size per-kind tables,
+    /// in declaration order (e.g. the injected-modifier bookkeeping).
     pub const fn index(self) -> usize {
         match self {
             ModifierKind::Shift => 0,

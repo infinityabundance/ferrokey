@@ -215,10 +215,10 @@ Proof conventions:
   (`KeySet::copy_into`, `count_of`, `has_duplicates`, `contains_held`) and
   index-based access instead. `--unwinding-assertions` turns any overlooked
   loop into a loud proof failure rather than silent truncation.
-- Symbolic time must sample every region of the tap/latch/lock thresholds
+- Symbolic time must sample every region of the tap/latch thresholds
   (the `{0ms, 900ms}` domain) instead of a broad `u64` range — the
-  implementation only distinguishes `duration < 400ms` vs `≥`, and
-  `< 500ms` vs `≥`, so the small domain is semantically exhaustive.
+  implementation only distinguishes `duration < 400ms` vs `≥`, so the
+  small domain is semantically exhaustive.
 - Keep the symbolic key universe small (`sequence_key`, `small_key`);
   multi-step symbolic state accumulation is the solver's main cost.
 

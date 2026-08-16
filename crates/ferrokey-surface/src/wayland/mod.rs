@@ -51,6 +51,15 @@ pub struct WlState {
     // Last known pointer position (wl_pointer::Button carries no
     // coordinates; the compositor always sends Motion before Button).
     pub last_pointer: Option<(f64, f64)>,
+    // Interactive-positioning state (see set_position / set_margin): the
+    // output's logical size, the current (left, bottom) margins, whether the
+    // first position has been applied, and a position requested before the
+    // output size was known.
+    pub mode_size: Option<(u32, u32)>,
+    pub output_size: Option<(u32, u32)>,
+    pub margins: (i32, i32),
+    pub positioned: bool,
+    pub pending_position: Option<(i32, i32)>,
     // wl_shm buffer pool
     pub buffer: Option<wl_buffer::WlBuffer>,
     pub backing: Option<File>,
@@ -79,6 +88,11 @@ impl WlState {
             visible: false,
             last_touch: None,
             last_pointer: None,
+            mode_size: None,
+            output_size: None,
+            margins: (0, 0),
+            positioned: false,
+            pending_position: None,
             buffer: None,
             backing: None,
             pool_size: 0,
@@ -115,6 +129,54 @@ impl WlState {
             if self.touch.is_none() {
                 self.touch = Some(seat.get_touch(qh, ()));
             }
+        }
+    }
+
+    /// The (left, bottom) margins that place a `w × h` surface at (x, y) on
+    /// an `ow × oh` output, clamped fully on-screen.
+    fn margins_for_position(x: i32, y: i32, w: i32, h: i32, ow: i32, oh: i32) -> (i32, i32) {
+        let x = x.clamp(0, (ow - w).max(0));
+        let y = y.clamp(0, (oh - h).max(0));
+        (x, (oh - y - h).max(0))
+    }
+
+    /// Recompute the output size from the mode, and apply the first position
+    /// once both the output size and the layer surface are known: an explicit
+    /// pending position, else bottom-center.
+    ///
+    /// Coordinate space: the layer surface never sets a buffer scale, so its
+    /// local space — and therefore its `set_size` size and `set_margin`
+    /// margins — is PHYSICAL pixels. The wl_output Mode event reports the
+    /// mode in physical pixels too, so the output size is the mode size
+    /// directly (dividing by the scale would misplace the surface: e.g. it
+    /// would land mid-screen and its right edge could sit off the output).
+    fn refresh_output_size(&mut self) {
+        let (mw, mh) = match self.mode_size {
+            Some(m) => m,
+            None => return,
+        };
+        self.output_size = Some((mw, mh));
+        let Some((ow, oh)) = self.output_size else {
+            return;
+        };
+        log::info!("wayland output: mode {mw}x{mh} (scale {})", self.scale);
+        if self.layer_surface.is_none() {
+            return;
+        }
+        if !self.positioned {
+            let w = self.pending_size.0 as i32;
+            let h = self.pending_size.1 as i32;
+            let default = ((ow as i32 - w).max(0) / 2, (oh as i32 - h).max(0));
+            let (x, y) = self.pending_position.take().unwrap_or(default);
+            let (left, bottom) = Self::margins_for_position(x, y, w, h, ow as i32, oh as i32);
+            let ls = self.layer_surface.as_ref().unwrap();
+            ls.set_margin(0, 0, bottom, left);
+            self.margins = (left, bottom);
+            self.positioned = true;
+            if let Some(surface) = &self.surface {
+                surface.commit();
+            }
+            log::info!("layer surface placed at ({x},{y}) margins ({left},{bottom})");
         }
     }
 }
@@ -212,6 +274,9 @@ impl WaylandSurface {
         if let Some(surface) = &self.state.surface {
             surface.commit();
         }
+        // The output size may already be known (delivered during the connect
+        // round-trip): apply the first position (bottom-center) now.
+        self.state.refresh_output_size();
         Ok(())
     }
 }
@@ -235,6 +300,48 @@ impl Surface for WaylandSurface {
         Ok(())
     }
 
+    fn set_position(&mut self, x: i32, y: i32) -> Result<(), SurfaceError> {
+        // The output size may not be known yet (first frames): remember the
+        // request; refresh_output_size applies it when the size arrives.
+        if self.state.output_size.is_none() {
+            self.state.pending_position = Some((x, y));
+            return Ok(());
+        }
+        let Some(ls) = self.state.layer_surface.clone() else {
+            return Ok(());
+        };
+        let (ow, oh) = self.state.output_size.unwrap();
+        let (left, bottom) = WlState::margins_for_position(
+            x,
+            y,
+            self.width as i32,
+            self.height as i32,
+            ow as i32,
+            oh as i32,
+        );
+        ls.set_margin(0, 0, bottom, left);
+        self.state.margins = (left, bottom);
+        self.state.positioned = true;
+        self.state.pending_position = None;
+        if let Some(surface) = &self.state.surface {
+            surface.commit();
+        }
+        self.conn
+            .flush()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        Ok(())
+    }
+
+    fn position(&self) -> Option<(i32, i32)> {
+        let (_, oh) = self.state.output_size?;
+        let (left, bottom) = self.state.margins;
+        Some((left, oh as i32 - self.height as i32 - bottom))
+    }
+
+    fn output_bounds(&self) -> Option<(u32, u32)> {
+        self.state.output_size
+    }
+
     fn present(
         &mut self,
         buffer: &[u8],
@@ -242,6 +349,15 @@ impl Surface for WaylandSurface {
         height: u32,
         stride: u32,
     ) -> Result<(), SurfaceError> {
+        // Hidden (tray toggle): detach the buffer so the compositor unmaps
+        // the surface; nothing is presented until it is shown again.
+        if !self.state.visible {
+            if let Some(surface) = &self.state.surface {
+                surface.attach(None, 0, 0);
+                surface.commit();
+            }
+            return Ok(());
+        }
         self.state.bind_input(&self.qh());
         if self.state.layer_surface.is_none() {
             self.ensure_created(width, height)?;
@@ -315,7 +431,37 @@ impl Surface for WaylandSurface {
                 ));
             }
             self.ensure_created(self.width, self.height)?;
+            // Re-assert the last-known position: the compositor recomputes a
+            // layer surface's placement from anchor + margins when it is
+            // (re)mapped, so re-sending the margins keeps the app's position
+            // bookkeeping authoritative across hide/show cycles (a stale
+            // placement here is what made drags after a tray show place the
+            // window somewhere unexpected). The margin change needs its own
+            // commit (ensure_created's commit already went out).
+            let (left, bottom) = self.state.margins;
+            if let Some(ls) = &self.state.layer_surface {
+                ls.set_margin(0, 0, bottom, left);
+            }
+            if let Some(surface) = &self.state.surface {
+                surface.commit();
+            }
+            self.conn
+                .flush()
+                .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
             self.ready = true;
+        } else {
+            // Hide SYNCHRONOUSLY: detach the buffer now so the compositor
+            // unmaps the surface immediately. Deferring this to the next
+            // present() depended on a pending redraw that might never arrive
+            // (the surface stayed mapped and input-active after "hide") or
+            // could fire at an arbitrary later moment.
+            if let Some(surface) = &self.state.surface {
+                surface.attach(None, 0, 0);
+                surface.commit();
+            }
+            self.conn
+                .flush()
+                .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
         }
         Ok(())
     }
@@ -576,9 +722,18 @@ impl Dispatch<wl_output::WlOutput, ()> for WlState {
         _c: &Connection,
         _q: &QueueHandle<WlState>,
     ) {
-        if let wl_output::Event::Scale { factor } = e {
-            s.scale = factor;
+        match e {
+            wl_output::Event::Scale { factor } => {
+                s.scale = factor;
+            }
+            wl_output::Event::Mode { width, height, .. } => {
+                s.mode_size = Some((width.max(0) as u32, height.max(0) as u32));
+            }
+            _ => {}
         }
+        // Recompute the logical size (mode / scale) and apply the first
+        // position once both are known.
+        s.refresh_output_size();
     }
 }
 

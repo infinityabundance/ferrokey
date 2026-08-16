@@ -12,6 +12,25 @@ allowlist, no network, no arbitrary opens and no runtime ioctl.
 |------|---------|
 | `ferrokeyd.service` | Hardened systemd unit (see below) |
 | `ferrokeyd.yaml` | Production security-boundary config (`/etc/ferrokey/ferrokeyd.yaml`, root-owned 0644, §45) |
+| `ferrokey.desktop` | Desktop launcher entry for the OSK (icon in app menus / launchers) |
+| `icons/ferrokey.svg` | Launcher icon (installed to `share/icons/hicolor/scalable/apps/`) |
+
+## Desktop launcher (`ferrokey.desktop` + `icons/ferrokey.svg`)
+
+Install the UI binary at `$PREFIX/bin/ferrokey`, then:
+
+```sh
+install -Dm 0644 PACKAGING/ferrokey.desktop "$PREFIX/share/applications/ferrokey.desktop"
+install -Dm 0644 PACKAGING/icons/ferrokey.svg \
+    "$PREFIX/share/icons/hicolor/scalable/apps/ferrokey.svg"
+gtk-update-icon-cache "$PREFIX/share/icons/hicolor" || true
+```
+
+The OSK window itself never appears in the taskbar by design (layer-shell
+`keyboard_interactivity=none` / `WM_HINTS.input=False`, so it cannot steal
+focus). The runtime handle is the StatusNotifierItem tray icon (show/hide);
+the desktop entry exists so launchers/app menus find Ferrokey under its own
+icon.
 
 ## Runtime layout
 

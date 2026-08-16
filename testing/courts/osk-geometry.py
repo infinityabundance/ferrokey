@@ -16,18 +16,21 @@ PAD = 6
 SPACING = 6
 KEY_H = 52
 MIN_W = 24.0
+# The OSK window is the fixed 22px title strip PLUS the keyboard; the keys
+# start below it. Must match views::TITLE_H.
+TITLE_H = 22
 
 VIEWS = {
     "compact": {
-        "width": 920,
+        "width": 936,
         "base": 58.0,
         "rows": [
-            ["escape", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"],
+            ["escape", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "logo"],
             ["grave", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "minus", "equal", "backspace"],
             ["tab", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "left-bracket", "right-bracket", "backslash"],
             ["caps-lock", "a", "s", "d", "f", "g", "h", "j", "k", "l", "semicolon", "apostrophe", "enter"],
-            ["left-shift", "z", "x", "c", "v", "b", "n", "m", "comma", "dot", "slash", "right-shift"],
-            ["left-ctrl", "left-meta", "left-alt", "space", "right-alt", "compose", "menu", "right-ctrl"],
+            ["left-shift", "z", "x", "c", "v", "b", "n", "m", "comma", "dot", "slash", "up"],
+            ["left-ctrl", "left-meta", "left-alt", "space", "right-alt", "compose", "menu", "left", "down", "right"],
         ],
         "widths": {},
     },
@@ -56,7 +59,7 @@ VIEWS = {
         },
     },
     "terminal": {
-        "width": 920,
+        "width": 936,
         "base": 58.0,
         "rows": [
             # shortcut row (chord keys carry display names)
@@ -89,8 +92,10 @@ VIEWS = {
 }
 
 # The compact view's wide keys (shared with the full view's defaults where
-# not overridden above).
+# not overridden above). The logo button is 0.9 of the base width; `up` is
+# 1.0 like the rest of the arrow cluster.
 COMPACT_WIDE = {"escape", "backspace", "tab", "caps-lock", "enter", "left-shift", "right-shift"}
+COMPACT_LOGO_WIDTH = 0.9
 
 # Physical keys shown with a label override in the UI (position is unaffected,
 # but kept here so the mirror documents the full view data).
@@ -109,8 +114,11 @@ def factor(view, name: str) -> float:
     # exists to prevent).
     if view["id"] in ("full", "terminal"):
         return view["widths"].get(name, 1.0)
+    if name == "logo":
+        return COMPACT_LOGO_WIDTH
     if name == "space":
-        return 6.0
+        # Compact: 4.9 (not 6.0) so the arrow cluster aligns under up.
+        return 4.9
     if name in COMPACT_WIDE:
         return 1.6
     return 1.0
@@ -125,7 +133,7 @@ def center(view, name: str):
             w = key_width(view, k, factor(view, k))
             if k == name:
                 cx = x + w / 2.0
-                cy = PAD + row_idx * (KEY_H + SPACING) + KEY_H / 2.0
+                cy = TITLE_H + PAD + row_idx * (KEY_H + SPACING) + KEY_H / 2.0
                 return int(cx), int(cy)
             x += w + SPACING
     return None

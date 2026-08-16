@@ -53,30 +53,30 @@ The broker socket the UI connects to.
 Type: integer (px). Defaults: 920, 342. Initial OSK size. Validation: must
 be > 0.
 .TP
+.B scale
+Type: float. Default: 0.75. Initial uniform keyboard scale: 1.0 is the
+view's natural size; the shipped default renders the OSK 25% smaller. The
+window can be resized at runtime by dragging its bottom-right corner, which
+rescales the whole keyboard (0.35-3.0). Validation: must be in (0, 4].
+.TP
 .B x11_display
 Type: string or null. Default: null. Override the X11 display for the
 x11-no-input backend (mainly for tests); null = auto-detect from
 .BR DISPLAY .
 .TP
 .B sticky
-Type: map. Sticky/locked modifier behaviour.
+Type: map. Sticky modifier behaviour: a quick tap on a modifier latches it
+for the next qualifying key; a tap on an already-active modifier disengages
+it (click-to-toggle). Locks are reached only through the Caps Lock key.
 .RS
 .TP
 .B sticky.latch_enabled
 bool, default true: quick taps latch the modifier for the next qualifying
 key.
 .TP
-.B sticky.lock_enabled
-bool, default true: double-taps lock the modifier (Shift double-tap = Caps
-Lock).
-.TP
 .B sticky.tap_timeout_ms
 integer, default 400: maximum press duration for a release to count as a
 tap.
-.TP
-.B sticky.double_tap_timeout_ms
-integer, default 500: window within which two modifier taps count as a
-double-tap.
 .RE
 .TP
 .B repeat
@@ -172,9 +172,7 @@ touches (ambiguous) never pollute the model.
     height: 342
     sticky:
       latch_enabled: true
-      lock_enabled: true
       tap_timeout_ms: 400
-      double_tap_timeout_ms: 500
     repeat:
       enabled: true
       delay_ms: 500

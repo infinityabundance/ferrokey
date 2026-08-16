@@ -4,22 +4,22 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Sticky/latch settings (mirrors ferrokey-core `StateSettings`).
+///
+/// Sticky semantics: a quick tap on a modifier latches it for the next
+/// qualifying key; a tap on an already-active modifier disengages it
+/// (click-to-toggle). Locks are reached only through the Caps Lock key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StickyConfig {
     pub latch_enabled: bool,
-    pub lock_enabled: bool,
     pub tap_timeout_ms: u64,
-    pub double_tap_timeout_ms: u64,
 }
 
 impl Default for StickyConfig {
     fn default() -> Self {
         StickyConfig {
             latch_enabled: true,
-            lock_enabled: true,
             tap_timeout_ms: 400,
-            double_tap_timeout_ms: 500,
         }
     }
 }
@@ -58,6 +58,11 @@ pub struct UiConfig {
     /// Initial OSK size (physical pixels).
     pub width: u32,
     pub height: u32,
+    /// Initial uniform keyboard scale (1.0 = the view's natural size).
+    /// Ships at 0.75 so the OSK is compact out of the box; the window can
+    /// be resized at runtime, which rescales the keyboard (0.35–3.0).
+    #[serde(default = "UiConfig::default_scale")]
+    pub scale: f32,
     /// Override the X11 display (for tests); `None` = auto.
     pub x11_display: Option<String>,
     pub sticky: StickyConfig,
@@ -151,6 +156,7 @@ impl Default for UiConfig {
             socket_path: PathBuf::from(runtime).join("ferrokeyd.sock"),
             width: 920,
             height: 342,
+            scale: 0.75,
             x11_display: None,
             sticky: StickyConfig::default(),
             repeat: RepeatConfig::default(),
@@ -164,6 +170,12 @@ impl Default for UiConfig {
 }
 
 impl UiConfig {
+    /// The shipped default keyboard scale (25% smaller than the natural
+    /// view size).
+    pub const fn default_scale() -> f32 {
+        0.75
+    }
+
     pub fn load(path: &std::path::Path) -> Result<Self, ConfigError> {
         let text = std::fs::read_to_string(path).map_err(|e| ConfigError::Io {
             path: path.display().to_string(),
@@ -177,6 +189,9 @@ impl UiConfig {
             serde_yaml::from_str(yaml).map_err(|e| ConfigError::Parse(e.to_string()))?;
         if config.width == 0 || config.height == 0 {
             return Err(ConfigError::Invalid("width and height must be > 0".into()));
+        }
+        if !(config.scale > 0.0 && config.scale <= 4.0) {
+            return Err(ConfigError::Invalid("scale must be in (0, 4]".into()));
         }
         Ok(config)
     }

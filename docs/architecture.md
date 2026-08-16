@@ -48,9 +48,8 @@ and the window integration (surfaces) is replaceable.
   `latched`/`locked: ModifierSet`, `caps_lock`/`num_lock: bool`,
   `active_layer: Layer`, `injected_mods: BTreeMap<PhysicalKey, Vec<PhysicalKey>>`
   (modifiers injected on behalf of a held key), `tap_track`
-  (per-key `down_at` + `interleaved`), `last_tap` (per-modifier, for
-  double-tap lock). Plus `RepeatEngine` (`repeat.rs`) and `ComposeEngine`
-  (`compose.rs`).
+  (per-key `down_at` + `interleaved`). Plus `RepeatEngine` (`repeat.rs`) and
+  `ComposeEngine` (`compose.rs`).
 - **Inputs.** `InputRequest::{Key(KeyAction), Text(String)}` with
   `KeyAction::{Down, Up, Tap, ReleaseAll}`; every mutating method takes
   `now: Instant` so time is explicit and reproducible.
@@ -317,12 +316,19 @@ key up ──press──▶ key down (depressed) ──release──▶ key up
              modifier held ──tap release──▶ latched (sticky)
                    │                          │
                    │                          └─ next qualifying key press ──▶ consumed
-                   └─ double-tap release──▶ locked (Caps Lock mirror etc.)
-                                                    
+                   │                          └─ tap on the active modifier ──▶ disengaged
+                   │
+                   └─ Caps Lock key tap──▶ locked (Caps Lock mirror = locked SHIFT)
+
 release_all ──▶ every depressed key Up (non-modifiers first, modifiers last);
                 injected modifiers released; latched cleared; LOCKED persists
                 (Caps/Num Lock are logical state, like physical LEDs)
 ```
+
+Modifier semantics are click-to-toggle: a quick tap latches an idle modifier
+for the next qualifying key, and a tap on an already-active (latched or
+locked) modifier disengages it. Modifier taps never invent lock state — the
+only lock entry is the Caps Lock key itself.
 
 `Layer::from_modifiers(ModifierSet)` resolves the active layer with
 precedence Fn > AltGr > Shift > Base. `KeyEvent` is exactly `Down`/`Up`
@@ -372,7 +378,7 @@ unregisters the uinput device when the fd closes (proven by
 | `release_all` clears every physical hold and latched state; locks persist | `KeyboardState::release_all` | crash, device-lifetime (`SEC.STATE.SIGKILL`) | proved: `KANI.RELEASEALL.001` (WS3 receipt) |
 | A held key exists exactly once | `depressed: KeySet` (fixed-capacity sorted set); duplicate `press` is a no-op | soak (chords), unit tests | proved: `KANI.HELD.001` (WS3 receipt) |
 | Latch is consumed by the next qualifying key press | `press` clears `latched` after injecting modifiers | modifiers, altgr | proved: `KANI.LATCH.001` (WS3 receipt) |
-| Lock only via the double-tap transition | `release` → `toggle_lock` on double-tap | modifiers, altgr | proved: `KANI.LOCK.001` (WS3 receipt) |
+| Lock only via the Caps Lock key; modifier taps never invent lock state and disengage an active modifier | `release` clears a tap on an active (latched/locked) modifier and latches an idle one; `CapsLock` release toggles the lock | modifiers, altgr | proved: `KANI.LOCK.001` (WS3 receipt) |
 | Repeat never manufactures a held key | `RepeatEngine` fixed-capacity table; `tick` emits only tracked keys | repeat; unit tests | proved: `KANI.REPEAT.001` (WS3 receipt) |
 | Release of an unheld key cannot create state | `KeyboardState::release` early-returns on absent keys | repeat; unit tests | proved: `KANI.RELEASE.001` (WS3 receipt) |
 | Interleaved press/release/`release_all` sequences preserve the invariant set | `KeyboardState` ops over the fixed-capacity tables | soak (chords); unit tests | proved: `KANI.SEQUENCE.001` (WS3 receipt) |

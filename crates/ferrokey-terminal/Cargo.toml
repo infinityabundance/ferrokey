@@ -1,7 +1,7 @@
 [package]
 name = "ferrokey-terminal"
 description = "The embedded PTY terminal engine for Ferrokey's terminal workspace mode: bounded ANSI parser, grid, scrollback, key encoder, PTY and child-session lifecycle"
-version = "0.1.2"
+version = "0.1.3"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

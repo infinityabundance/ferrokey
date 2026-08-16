@@ -30,7 +30,17 @@ use std::collections::BTreeMap;
 /// Pointer presses keep the plain visual hit-test (mouse input is precise).
 pub struct PointerBridge {
     view: &'static KeyboardView,
-    scale: f32,
+    /// Platform scale factor (physical ÷ logical).
+    platform_scale: f32,
+    /// Uniform keyboard scale (1.0 = the view's natural size): the window
+    /// can be resized so the whole OSK grows or shrinks. Pointer events are
+    /// mapped into the view space via `platform_scale × view_scale` plus the
+    /// title-strip offset and the keyboard's horizontal centering.
+    view_scale: f32,
+    /// The keyboard's horizontal offset within the window (logical px).
+    keyboard_x: f32,
+    /// The title strip height (logical px).
+    title_h: f32,
     /// Adaptive touch hit-testing + learning; `None` = disabled.
     adaptive: Option<AdaptiveGeometry>,
     /// key index → name, in view order (the adaptive geometry's index
@@ -67,7 +77,10 @@ impl PointerBridge {
         let adaptive = adaptive.map(|(ag, _)| ag);
         PointerBridge {
             view,
-            scale,
+            platform_scale: if scale > 0.0 { scale } else { 1.0 },
+            view_scale: 1.0,
+            keyboard_x: 0.0,
+            title_h: 0.0,
             adaptive,
             names,
             shell_row: None,
@@ -94,9 +107,34 @@ impl PointerBridge {
         row.iter().find(|k| k.label == name).map(|k| k.sequence)
     }
 
-    /// Keep the bridge's scale in sync with the surface (HiDPI).
+    /// Keep the bridge's platform scale in sync with the surface (HiDPI).
     pub fn set_scale(&mut self, scale: f32) {
-        self.scale = scale;
+        if scale > 0.0 {
+            self.platform_scale = scale;
+        }
+    }
+
+    /// Set the window→view transform: the uniform keyboard scale, the
+    /// keyboard's horizontal offset within the window, and the title strip
+    /// height (all logical px; 1.0 / 0 / 0 = the classic identity layout).
+    /// Physical pointer coordinates are mapped to view space as
+    /// `((x / platform_scale - keyboard_x) / view_scale,
+    ///  (y / platform_scale - title_h) / view_scale)`.
+    pub fn set_view_transform(&mut self, view_scale: f32, keyboard_x: f32, title_h: f32) {
+        self.view_scale = if view_scale > 0.0 { view_scale } else { 1.0 };
+        self.keyboard_x = keyboard_x;
+        self.title_h = title_h;
+    }
+
+    /// Map a physical-pixel pointer point into view (logical, unscaled)
+    /// coordinates.
+    fn view_point(&self, x: f64, y: f64) -> (f32, f32) {
+        let ps = f64::from(self.platform_scale);
+        let s = self.view_scale;
+        (
+            ((x / ps) - f64::from(self.keyboard_x)) as f32 / s,
+            ((y / ps) - f64::from(self.title_h)) as f32 / s,
+        )
     }
 
     /// Advance the adaptive geometry: run an optimization pass when enough
@@ -110,6 +148,15 @@ impl PointerBridge {
         }
     }
 
+    /// Whether a hit key is actionable: a shell-row sequence, a view chord,
+    /// or a real physical key. Decorative keys (the logo) fall through —
+    /// they are visual only and never produce key events.
+    fn is_actionable(&self, name: &str) -> bool {
+        self.shell_sequence_for(name).is_some()
+            || self.view.chord_for(name).is_some()
+            || ferrokey_core::PhysicalKey::from_name(name).is_some()
+    }
+
     /// Translate one raw surface event into key actions on `ui`.
     pub fn handle_event(&mut self, ui: &MainWindow, event: SurfaceEvent) {
         match event {
@@ -121,7 +168,7 @@ impl PointerBridge {
                         self.play_sequence(ui, seq);
                     } else if let Some(chord) = self.view.chord_for(name) {
                         self.play_chord(ui, chord);
-                    } else {
+                    } else if self.is_actionable(name) {
                         self.pointer_down.insert(button, name);
                         ui.invoke_key_pressed(name.into());
                     }
@@ -150,7 +197,7 @@ impl PointerBridge {
                             self.play_sequence(ui, seq);
                         } else if let Some(chord) = self.view.chord_for(name) {
                             self.play_chord(ui, chord);
-                        } else {
+                        } else if self.is_actionable(name) {
                             self.touch_down = Some(name);
                             ui.invoke_key_pressed(name.into());
                         }
@@ -173,18 +220,14 @@ impl PointerBridge {
 
     /// The key under a physical-pixel point, if any.
     fn key_at(&self, x: f64, y: f64) -> Option<&'static str> {
-        let scale = if self.scale > 0.0 { self.scale } else { 1.0 };
-        views::key_at(
-            self.view,
-            (x / f64::from(scale)) as f32,
-            (y / f64::from(scale)) as f32,
-        )
+        let (vx, vy) = self.view_point(x, y);
+        views::key_at(self.view, vx, vy)
     }
 
-    /// The touch point in logical (view) coordinates.
+    /// The touch point in view (logical) coordinates.
     fn logical_point(&self, x: f64, y: f64) -> Point {
-        let scale = if self.scale > 0.0 { self.scale } else { 1.0 };
-        Point::new(x / f64::from(scale), y / f64::from(scale))
+        let (vx, vy) = self.view_point(x, y);
+        Point::new(f64::from(vx), f64::from(vy))
     }
 
     /// The key under a touch, via the adaptive geometry when enabled (with
@@ -207,12 +250,8 @@ impl PointerBridge {
                 None => None,
             }
         } else {
-            let scale = if self.scale > 0.0 { self.scale } else { 1.0 };
-            views::key_at(
-                self.view,
-                (x / f64::from(scale)) as f32,
-                (y / f64::from(scale)) as f32,
-            )
+            let (vx, vy) = self.view_point(x, y);
+            views::key_at(self.view, vx, vy)
         }
     }
 

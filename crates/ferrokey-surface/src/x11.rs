@@ -75,6 +75,7 @@ pub struct X11Surface {
     conn: RustConnection,
     #[allow(dead_code)]
     screen_num: usize,
+    screen_size: (u32, u32),
     window: u32,
     gc: u32,
     width: u32,
@@ -94,6 +95,10 @@ impl X11Surface {
         let (conn, screen_num) = x11rb::connect(options.display.as_deref())
             .map_err(|e| SurfaceError::Connect(e.to_string()))?;
         let screen = &conn.setup().roots[screen_num];
+        let screen_size = (
+            u32::from(screen.width_in_pixels),
+            u32::from(screen.height_in_pixels),
+        );
 
         let window = conn
             .generate_id()
@@ -182,6 +187,7 @@ impl X11Surface {
         let mut surface = X11Surface {
             conn,
             screen_num,
+            screen_size,
             window,
             gc,
             width: 0,
@@ -405,6 +411,30 @@ impl Surface for X11Surface {
             .flush()
             .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
         Ok(())
+    }
+
+    fn set_position(&mut self, x: i32, y: i32) -> Result<(), SurfaceError> {
+        self.conn
+            .configure_window(
+                self.window,
+                &x11rb::protocol::xproto::ConfigureWindowAux::new()
+                    .x(Some(x))
+                    .y(Some(y)),
+            )
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        self.conn
+            .flush()
+            .map_err(|e| SurfaceError::Protocol(e.to_string()))?;
+        Ok(())
+    }
+
+    fn position(&self) -> Option<(i32, i32)> {
+        let reply = self.conn.get_geometry(self.window).ok()?.reply().ok()?;
+        Some((i32::from(reply.x), i32::from(reply.y)))
+    }
+
+    fn output_bounds(&self) -> Option<(u32, u32)> {
+        Some(self.screen_size)
     }
 
     fn present(

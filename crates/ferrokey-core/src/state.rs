@@ -3,8 +3,10 @@
 //! Owns everything that cannot be represented by `send_key(u16)`:
 //!
 //! * physically depressed keys (chords / rollover with a hard cap)
-//! * latched (sticky) modifiers — tap Shift ⇒ next key is shifted
-//! * locked modifiers — double-tap Shift ⇒ Caps Lock
+//! * latched (sticky) modifiers — tap Shift ⇒ next key is shifted;
+//!   tapping an already-active modifier disengages it (click-to-toggle)
+//! * locked modifiers — the Caps Lock key (a tap toggles it); ordinary
+//!   modifier taps never invent lock state
 //! * Caps Lock / Num Lock mirror state
 //! * active layer resolution (Base / Shift / AltGr / Fn)
 //!
@@ -82,12 +84,8 @@ impl Layer {
 pub struct StateSettings {
     /// Allow sticky (latched) modifiers via quick taps.
     pub latch_enabled: bool,
-    /// Allow locking modifiers via double-taps (e.g. Shift ⇒ Caps Lock).
-    pub lock_enabled: bool,
     /// Maximum press duration for a release to count as a "tap".
     pub tap_timeout: Duration,
-    /// Window within which two taps of the same modifier count as a double-tap.
-    pub double_tap_timeout: Duration,
     /// Maximum number of simultaneously depressed keys (rollover cap).
     pub max_held_keys: usize,
 }
@@ -96,9 +94,7 @@ impl Default for StateSettings {
     fn default() -> Self {
         StateSettings {
             latch_enabled: true,
-            lock_enabled: true,
             tap_timeout: Duration::from_millis(400),
-            double_tap_timeout: Duration::from_millis(500),
             max_held_keys: 16,
         }
     }
@@ -162,7 +158,6 @@ pub struct KeyboardState {
     injected_mods_len: usize,
     tap_track: [Option<(PhysicalKey, TapTrack)>; MAX_HELD_KEYS],
     tap_track_len: usize,
-    last_tap: [Option<Moment>; ModifierKind::COUNT],
 }
 
 impl KeyboardState {
@@ -179,7 +174,6 @@ impl KeyboardState {
             injected_mods_len: 0,
             tap_track: [None; MAX_HELD_KEYS],
             tap_track_len: 0,
-            last_tap: [None; ModifierKind::COUNT],
         }
     }
 
@@ -292,10 +286,9 @@ impl KeyboardState {
             self.depressed.insert(key);
             events.push(KeyEvent::Down(key));
         } else {
-            // A normal key press. Resolve the modifiers that must be engaged
-            // (held ∪ latched ∪ locked), injecting the physical modifier keys
-            // that are not already down.
-            let effective = self.effective_modifiers();
+            // A normal key press. Inject the physical modifier keys for the
+            // modifiers that must be engaged (latched + locked minus the Caps
+            // Lock mirror) and are not already physically down.
             let held_mods = self.held_modifiers();
             let mut injected = InjectedMods::new();
             for kind in [
@@ -306,7 +299,17 @@ impl KeyboardState {
                 ModifierKind::Meta,
                 ModifierKind::Fn,
             ] {
-                if effective.contains(kind.into()) && !held_mods.contains(kind.into()) {
+                // Injection source: latched modifiers plus LOCKED modifiers,
+                // EXCLUDING the Caps Lock mirror (`locked` SHIFT bit). The
+                // kernel applies Caps Lock itself — the driver toggled it via
+                // a real KEY_CAPSLOCK — so re-injecting a physical shift
+                // would make shift+caps = lowercase (the double-application
+                // bug). Latched/held shift is real user intent and IS
+                // injected: shift + caps = lowercase, exactly like a physical
+                // keyboard.
+                let latched_or_locked = self.latched.contains(kind.into())
+                    || (kind != ModifierKind::Shift && self.locked.contains(kind.into()));
+                if latched_or_locked && !held_mods.contains(kind.into()) {
                     let phys = kind.preferred_key();
                     if !self.depressed.contains(phys) {
                         self.depressed.insert(phys);
@@ -361,20 +364,24 @@ impl KeyboardState {
                 None => false,
             };
             if is_tap && self.settings.latch_enabled {
-                let double = self.settings.lock_enabled
-                    && self.last_tap[kind.index()].is_some_and(|last| {
-                        now.saturating_duration_since(last) < self.settings.double_tap_timeout
-                    });
-                if double {
-                    self.toggle_lock(kind);
-                    self.latched.remove(kind.into());
-                    self.last_tap[kind.index()] = None;
+                // Click-to-toggle: a tap on an already-active modifier (latched
+                // or locked) DISENGAGES it; a tap on an idle one latches it.
+                // Locks are therefore never invented by plain modifier taps —
+                // the only lock entry is the Caps Lock key itself. The active
+                // test excludes the Caps Lock mirror (`locked` SHIFT): with
+                // caps on, a shift tap is a FRESH intent (it latches — sticky
+                // shift + caps = lowercase), never a no-op on the mirror.
+                let bit: ModifierSet = kind.into();
+                let active = self.latched.contains(bit)
+                    || (kind != ModifierKind::Shift && self.locked.contains(bit));
+                if active {
+                    self.latched.remove(bit);
+                    if kind != ModifierKind::Shift {
+                        self.locked.remove(bit);
+                    }
                 } else {
-                    self.latched.insert(kind.into());
-                    self.last_tap[kind.index()] = Some(now);
+                    self.latched.insert(bit);
                 }
-            } else {
-                self.last_tap[kind.index()] = None;
             }
         } else if key.is_lock_key() {
             events.push(KeyEvent::Up(key));
@@ -532,20 +539,6 @@ impl KeyboardState {
         }
     }
 
-    fn toggle_lock(&mut self, kind: ModifierKind) {
-        match kind {
-            ModifierKind::Shift => self.toggle_caps_lock(),
-            other => {
-                let bit: ModifierSet = other.into();
-                if self.locked.contains(bit) {
-                    self.locked.remove(bit);
-                } else {
-                    self.locked.insert(bit);
-                }
-            }
-        }
-    }
-
     fn update_layer(&mut self) {
         self.active_layer = Layer::from_modifiers(self.effective_modifiers());
         debug_assert_eq!(self.locked.contains(ModifierSet::SHIFT), self.caps_lock);
@@ -644,23 +637,109 @@ mod tests {
     }
 
     #[test]
-    fn double_tap_shift_toggles_caps_lock() {
+    fn tap_on_active_modifier_disengages_it() {
         let mut s = KeyboardState::new(settings());
         let now = t0();
-        // Tap 1
-        s.press(PhysicalKey::RightShift, now).unwrap();
-        s.release(PhysicalKey::RightShift, now + Duration::from_millis(50))
+        // Tap 1: shift latches.
+        s.press(PhysicalKey::LeftShift, now).unwrap();
+        s.release(PhysicalKey::LeftShift, now + Duration::from_millis(50))
             .unwrap();
         assert!(s.latched().contains(ModifierSet::SHIFT));
-        // Tap 2 within window
-        s.press(PhysicalKey::RightShift, now + Duration::from_millis(100))
+        // Tap 2 (a double-click would previously have locked): disengages.
+        s.press(PhysicalKey::LeftShift, now + Duration::from_millis(100))
             .unwrap();
-        s.release(PhysicalKey::RightShift, now + Duration::from_millis(150))
+        s.release(PhysicalKey::LeftShift, now + Duration::from_millis(150))
             .unwrap();
-        assert!(s.caps_lock(), "double-tap should lock shift");
-        assert!(s.latched().is_empty(), "lock replaces latch");
+        assert!(
+            !s.latched().contains(ModifierSet::SHIFT),
+            "second tap must disengage the latch"
+        );
+        assert!(
+            !s.caps_lock(),
+            "a modifier tap must never invent lock state"
+        );
+        assert!(s.locked().is_empty(), "a modifier tap must never lock");
+        // A third tap latches again (pure toggle per tap).
+        s.press(PhysicalKey::LeftShift, now + Duration::from_millis(200))
+            .unwrap();
+        s.release(PhysicalKey::LeftShift, now + Duration::from_millis(250))
+            .unwrap();
+        assert!(s.latched().contains(ModifierSet::SHIFT));
+    }
 
-        // Caps lock now applies shift to keys.
+    #[test]
+    fn tap_on_locked_modifier_disengages_it() {
+        let mut s = KeyboardState::new(settings());
+        let now = t0();
+        // Ctrl locked via the (configurable) lock path: a tap disengages it.
+        // (The tap path no longer invents locks; this proves the disengage
+        // half of the toggle for a modifier that IS locked.)
+        s.locked.insert(ModifierSet::CTRL);
+        s.press(PhysicalKey::LeftCtrl, now).unwrap();
+        s.release(PhysicalKey::LeftCtrl, now + Duration::from_millis(50))
+            .unwrap();
+        assert!(!s.locked().contains(ModifierSet::CTRL), "tap unlocks");
+        assert!(!s.latched().contains(ModifierSet::CTRL));
+    }
+
+    #[test]
+    fn shift_tap_with_caps_latches_and_keeps_caps() {
+        let mut s = KeyboardState::new(settings());
+        let now = t0();
+        s.press(PhysicalKey::CapsLock, now).unwrap();
+        s.release(PhysicalKey::CapsLock, now + Duration::from_millis(40))
+            .unwrap();
+        assert!(s.caps_lock());
+        // Tapping shift with caps on is a FRESH intent: it latches (sticky
+        // shift + caps = lowercase, like a physical keyboard). It must not
+        // clear the lock (only the Caps Lock key toggles it).
+        s.press(PhysicalKey::LeftShift, now + Duration::from_millis(100))
+            .unwrap();
+        s.release(PhysicalKey::LeftShift, now + Duration::from_millis(150))
+            .unwrap();
+        assert!(s.caps_lock(), "shift tap must not clear caps lock");
+        assert!(s.locked().contains(ModifierSet::SHIFT));
+        assert!(
+            s.latched().contains(ModifierSet::SHIFT),
+            "shift tap latches"
+        );
+    }
+
+    #[test]
+    fn caps_lock_letter_press_does_not_inject_shift() {
+        let mut s = KeyboardState::new(settings());
+        let now = t0();
+        // Caps lock ON (the kernel applies caps; the driver toggled it via a
+        // real KEY_CAPSLOCK, so injecting shift would double-apply and produce
+        // lowercase).
+        s.press(PhysicalKey::CapsLock, now).unwrap();
+        s.release(PhysicalKey::CapsLock, now + Duration::from_millis(40))
+            .unwrap();
+        assert!(s.caps_lock());
+        // A plain letter with caps on emits ONLY the letter: no injected
+        // shift (the kernel caps lock already provides it).
+        let ev = s
+            .press(PhysicalKey::A, now + Duration::from_millis(100))
+            .unwrap();
+        assert_eq!(ev, vec![KeyEvent::Down(PhysicalKey::A)]);
+        s.release_all();
+    }
+
+    #[test]
+    fn latched_shift_with_caps_still_injects_shift() {
+        let mut s = KeyboardState::new(settings());
+        let now = t0();
+        s.press(PhysicalKey::CapsLock, now).unwrap();
+        s.release(PhysicalKey::CapsLock, now + Duration::from_millis(40))
+            .unwrap();
+        // Tap shift (latch) — real user intent for a lowercase letter.
+        s.press(PhysicalKey::LeftShift, now + Duration::from_millis(100))
+            .unwrap();
+        s.release(PhysicalKey::LeftShift, now + Duration::from_millis(150))
+            .unwrap();
+        assert!(s.latched().contains(ModifierSet::SHIFT));
+        // Shift intent with caps on: shift IS injected (caps + shift =
+        // lowercase, like a physical keyboard).
         let ev = s
             .press(PhysicalKey::A, now + Duration::from_millis(200))
             .unwrap();
@@ -671,22 +750,25 @@ mod tests {
                 KeyEvent::Down(PhysicalKey::A)
             ]
         );
+        s.release_all();
+    }
 
-        // Release A (releases the injected shift) so the next taps are clean.
-        s.release(PhysicalKey::A, now + Duration::from_millis(250))
+    #[test]
+    fn held_shift_with_caps_is_not_reinjected() {
+        let mut s = KeyboardState::new(settings());
+        let now = t0();
+        s.press(PhysicalKey::CapsLock, now).unwrap();
+        s.release(PhysicalKey::CapsLock, now + Duration::from_millis(40))
             .unwrap();
-        assert!(s.depressed().is_empty());
-
-        // Toggle off again with another double-tap.
-        s.press(PhysicalKey::LeftShift, now + Duration::from_millis(300))
+        // Hold shift physically, then press A: shift is already down (its
+        // Down event was emitted at the hold), so nothing is injected.
+        s.press(PhysicalKey::LeftShift, now + Duration::from_millis(100))
             .unwrap();
-        s.release(PhysicalKey::LeftShift, now + Duration::from_millis(340))
+        let ev = s
+            .press(PhysicalKey::A, now + Duration::from_millis(110))
             .unwrap();
-        s.press(PhysicalKey::LeftShift, now + Duration::from_millis(380))
-            .unwrap();
-        s.release(PhysicalKey::LeftShift, now + Duration::from_millis(420))
-            .unwrap();
-        assert!(!s.caps_lock());
+        assert_eq!(ev, vec![KeyEvent::Down(PhysicalKey::A)]);
+        s.release_all();
     }
 
     #[test]
