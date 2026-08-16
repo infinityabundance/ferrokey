@@ -85,10 +85,14 @@ for kind in "${KINDS[@]}"; do
     echo "══════════════════════════════════════════════════════════"
 
     # ── 1. Disposable mutated copy (never the production tree) ──────────
+    # The tar carries SOURCE only: .kani-work (the kani verifier's work dir,
+    # GBs of root-owned build artifacts) and every build target dir are
+    # excluded so the copy stays small and lands on the /tmp tmpfs.
     WORK=$(mktemp -d /tmp/ferrokey-mutation.XXXXXX)
     echo "mutated copy: $WORK/src"
     mkdir -p "$WORK/src"
-    tar --exclude=./target --exclude=./testing/evidence \
+    tar --exclude=./target --exclude=./.kani-work --exclude=./testing/evidence \
+        --exclude=./testing/targets/target \
         -C "$REPO_ROOT" -cf - . | tar -C "$WORK/src" -xf -
     python3 "$REPO_ROOT/testing/scripts/mutations.py" "$kind" "$WORK/src"
 

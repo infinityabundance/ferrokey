@@ -52,9 +52,10 @@ echo "── running Kani negative controls (ferrokey-kani container) ──"
     "$KANI_IMAGE" \
     bash -c '
         set -euo pipefail
-        rm -rf /work/src /work/target
+        rm -rf /work/src /work/target /work/mut-*
         mkdir -p /work/src
         tar -C /repo --exclude=./.git --exclude=./target --exclude=./testing/evidence --exclude=./.kani-work \
+            --exclude=./testing/targets/target \
             -cf - . | tar -C /work/src -xf -
         sed -i "s/^rust-version = \"1.96\"/rust-version = \"1.93\"/" /work/src/Cargo.toml
         cd /work/src
@@ -120,8 +121,16 @@ for name, harness in EXPECT.items():
     ok = ok and detected
 sys.exit(0 if ok else 1)
 PYEOF
+        # OOM limits: the mutated copies (each with a full build target) are
+        # disposable scratch — never kept in the work dir.
+        rm -rf /work/src /work/target /work/mut-*
     ' 2>&1 | tee /tmp/kani-mutation.log
 MUT_OK=${PIPESTATUS[0]}
+
+# OOM limits: the mutated copies (each with its own full build target) are
+# disposable verification scratch; the container already rm's them, and a
+# host-side pass guarantees .kani-work never accumulates across runs (it
+# lives on the real disk and would otherwise grow unbounded).
 
 # Machine-readable receipt (KANI.MUTATION.001).
 cat > "$RECEIPT" <<EOF

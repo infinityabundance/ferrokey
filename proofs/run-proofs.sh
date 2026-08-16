@@ -60,9 +60,10 @@ echo "── running Kani proofs (ferrokey-kani container, mem cap $KANI_MEM_LIM
     "$KANI_IMAGE" \
     bash -c '
         set -euo pipefail
-        rm -rf /work/src /work/target
+        rm -rf /work/src /work/target /work/mut-*
         mkdir -p /work/src
         tar -C /repo --exclude=./.git --exclude=./target --exclude=./testing/evidence --exclude=./.kani-work \
+            --exclude=./testing/targets/target \
             -cf - . | tar -C /work/src -xf -
         # Metadata-only adjustment (see the script header).
         sed -i "s/^rust-version = \"1.96\"/rust-version = \"1.93\"/" /work/src/Cargo.toml
