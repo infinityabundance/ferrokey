@@ -128,7 +128,7 @@ fi
 AUTHORITATIVE_COURTS=(kernel-security systemd soak socket-hijack cross-user \
     device-lifetime uinput permissions x11 focus crash repeat modifiers layouts \
     applications dead-keys text-mode touch altgr full-desktop sdl terminal \
-    terminal-workspace session-lifetime backend-selection wayland xwayland \
+    terminal-workspace session-lifetime package backend-selection wayland xwayland \
     kernel-debug firefox chromium electron build unit)
 BAD_COURTS=()
 UNREFERENCED=()

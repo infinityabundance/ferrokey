@@ -30,7 +30,7 @@ and the window integration (surfaces) is replaceable.
 | `ferrokey-surface` | window-system integration + custom Slint platform | focus-preservation invariant; capability-driven backend selection | wayland, xwayland, x11, backend-selection |
 | `ferrokey-terminal` | embedded PTY terminal engine: bounded ANSI parser, grid, scrollback, key encoder, child lifecycle | terminal input never crosses the broker; parser is bounded | terminal-workspace (TERM.* incl. TUI), unit tests |
 | `ferrokey-uinput` | `/dev/uinput` virtual keyboard + held-key ledger | the only kernel interface; capability set immutable | uinput, kernel-security |
-| `ferrokeyd` | the constrained broker: supervisor, bootstrap, runtime sandbox | THE security boundary: non-root, zero caps, NO_NEW_PRIVS, seccomp, FD inventory | kernel-security, session-lifetime, device-lifetime, permissions, systemd, soak, mutation |
+| `ferrokeyd` | the constrained broker: supervisor, bootstrap, runtime sandbox | THE security boundary: non-root, zero caps, NO_NEW_PRIVS, seccomp, FD inventory | kernel-security, session-lifetime, device-lifetime, permissions, systemd, soak, package, mutation |
 | `ferrokey-proofs` | Kani model-checking harnesses over the **production** `ferrokey-core` state machine; never published | none (verification-only, `publish = false`) | kani-proofs (KANI.HELD.001 … KANI.SEQUENCE.001, KANI.MUTATION.001 — run in the `ferrokey-kani` VM) |
 | `xtask` | release tooling: `cargo xtask man` renders the troff man pages and validates their examples through the real config parsers | none (host-side tool) | man-drift (MAN.*) |
 
@@ -199,7 +199,9 @@ and the window integration (surfaces) is replaceable.
   `docs/threat-model.md`.
 - **Primary courts/tests.** kernel-security, session-lifetime, uinput,
   cross-user, socket-hijack, device-lifetime, permissions, systemd, soak,
-  kernel-debug (KASAN+UBSAN+LOCKDEP), the §93 mutation courts.
+  kernel-debug (KASAN+UBSAN+LOCKDEP), the §93 mutation courts, package
+  (PACKAGE.*: the documented install layout, systemd-analyze verify, and
+  real .deb/.rpm artifacts).
 
 ---
 
