@@ -17,9 +17,15 @@ set -euo pipefail
 source "$(dirname "$0")/../lib.sh"
 
 export OSK_VIEW=terminal
-KEYBOARD_H=342        # terminal view height (physical px)
+# The keyboard's BOTTOM edge (screen y where the pane starts) at scale 1.0:
+# the fixed 22px title strip PLUS the terminal view's 354px height (the view
+# grew to 354 when the shell shortcut row landed in WS5; osk-geometry.py
+# mirrors the same rows/KEY_H). Every pane interaction anchors on this.
+KEYBOARD_H=376
 PANE_H=220
-WIN_W=920
+# The window width at scale 1.0 = the view width (the config width field is
+# not used for the window; the app sizes it view.width × scale).
+WIN_W=936
 WIN_H=$((KEYBOARD_H + PANE_H))
 export RUST_LOG=debug
 
@@ -28,11 +34,16 @@ ORACLE_LOG="$OUT/oracle.log"
 rm -f "$ORACLE_SOCK" "$ORACLE_LOG"
 
 ORACLE_FIXTURE="$OUT/ferrokey-terminal-oracle.yaml"
+# scale: 1.0 is pinned (like every fixture file) because the court clicks
+# keys at osk-geometry.py coordinates, which mirror the UNSCALED view; the
+# shipped config default (0.75) would render the keyboard scaled and every
+# click would land on the wrong key.
 cat > "$ORACLE_FIXTURE" <<EOF
 layout: us
 view: terminal
 width: $WIN_W
 height: $KEYBOARD_H
+scale: 1.0
 terminal:
   enabled: true
   pane_height: $PANE_H
@@ -276,7 +287,8 @@ sleep 0.6
 # pill ships it to the X selection through the unprivileged backend (xclip);
 # the "paste" pill feeds it back into the PTY byte-exact. The pane gesture
 # machine never leaks a drag into an OSK key (§25).
-# Pane-relative geometry at font 16 px: cell 8x17; pane 220 tall at y=342.
+# Pane-relative geometry at font 16 px: cell 8x17; pane 220 tall starting
+# at y=376 (the keyboard's bottom edge at scale 1.0).
 SELECT_X0=4                      # cell (0,0) center x — start of "hello"
 SELECT_Y=$((KEYBOARD_H + 8))     # pane row 0 center y (screen coords)
 SELECT_X1=$((4 * 8 + 4))         # cell (4,0) center x — end of "hello"
@@ -358,9 +370,11 @@ fi
 sudo -u "$COURT_USER" env DISPLAY="$DISPLAY" xdotool windowsize \
     "$(window_of ferrokey)" 1000 700 2>/dev/null || true
 sleep 1.5
-# 700 tall → pane 700-342 = 358 → rows 358/17 = 21; 1000 wide → cols 125.
-if grep -q '"rows":21,"cols":125' "$ORACLE_LOG" 2>/dev/null; then
-    ok "TERM.RESIZE.001: child received the resized PTY window (21x125)"
+# 700 tall → keyboard 376 + pane 700-376 = 324 → rows 324/17 = 19;
+# 1000 wide → cell 8 px → cols 125. The pane is CONSTANT across keyboard
+# resizes (§25), so the child must report exactly 19x125.
+if grep -q '"rows":19,"cols":125' "$ORACLE_LOG" 2>/dev/null; then
+    ok "TERM.RESIZE.001: child received the resized PTY window (19x125)"
 else
     bad "TERM.RESIZE.001: child did not receive a resize; oracle winsizes:"
     grep '"event":"winsize"' "$ORACLE_LOG" | tail -3 || true
@@ -399,6 +413,7 @@ layout: us
 view: terminal
 width: $WIN_W
 height: $KEYBOARD_H
+scale: 1.0
 terminal:
   enabled: true
   pane_height: $PANE_H
@@ -459,6 +474,7 @@ layout: us
 view: terminal
 width: $WIN_W
 height: $KEYBOARD_H
+scale: 1.0
 terminal:
   enabled: true
   pane_height: $PANE_H
@@ -528,6 +544,7 @@ layout: us
 view: terminal
 width: $WIN_W
 height: $KEYBOARD_H
+scale: 1.0
 terminal:
   enabled: true
   pane_height: $PANE_H
