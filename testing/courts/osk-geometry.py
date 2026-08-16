@@ -8,7 +8,7 @@ change here breaks every court silently — the pinned positions are locked by
 `views::tests::pinned_*_geometry`.
 
 Usage:
-  osk-geometry.py [--view compact|full] KEY
+  osk-geometry.py [--view compact|full|terminal] KEY
 """
 import sys
 
@@ -62,31 +62,30 @@ VIEWS = {
         "width": 936,
         "base": 58.0,
         "rows": [
-            # shortcut row (chord keys carry display names)
-            ["Ctrl+C", "Ctrl+D", "Ctrl+Z", "Ctrl+L", "Ctrl+A", "escape", "home", "end"],
+            # shortcut row (chord keys carry display names) + the brand mark
+            ["Ctrl+C", "Ctrl+D", "Ctrl+Z", "Ctrl+L", "Ctrl+A", "escape", "home", "end", "logo"],
             ["grave", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "minus", "equal", "backspace"],
             ["tab", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "left-bracket", "right-bracket", "backslash"],
             ["caps-lock", "a", "s", "d", "f", "g", "h", "j", "k", "l", "semicolon", "apostrophe", "enter"],
-            ["left-shift", "z", "x", "c", "v", "b", "n", "m", "comma", "dot", "slash", "right-shift"],
-            ["left-ctrl", "left-alt", "left-meta", "space", "delete", "left", "down", "up", "right"],
+            ["left-shift", "z", "x", "c", "v", "b", "n", "m", "comma", "dot", "slash", "up"],
+            ["left-ctrl", "left-meta", "left-alt", "space", "right-alt", "compose", "menu", "left", "down", "right"],
         ],
         "widths": {
+            # shortcut-row chords and the brand mark
             "Ctrl+C": 1.3,
             "Ctrl+D": 1.3,
             "Ctrl+Z": 1.3,
             "Ctrl+L": 1.3,
             "Ctrl+A": 1.3,
             "escape": 1.3,
+            "logo": 0.9,
+            # rows 2-6 mirror the compact view's widths exactly
             "backspace": 1.6,
-            "tab": 1.4,
-            "caps-lock": 1.4,
+            "tab": 1.6,
+            "caps-lock": 1.6,
             "enter": 1.6,
-            "left-shift": 1.8,
-            "right-shift": 1.8,
-            "left-ctrl": 1.2,
-            "left-alt": 1.2,
-            "left-meta": 1.2,
-            "space": 6.0,
+            "left-shift": 1.6,
+            "space": 4.9,
         },
     },
 }

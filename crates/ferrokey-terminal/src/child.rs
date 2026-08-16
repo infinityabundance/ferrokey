@@ -336,10 +336,35 @@ fn child_exec(
     }
 }
 
-/// Log from the child after a failed setup call. `log!` in the child is
-/// acceptable here (single-threaded at this point; stderr still connected).
+/// Report a failed setup call from the post-fork child.
+///
+/// `eprintln!`/`log!` are **not** allowed here: they take the stdio lock,
+/// which another thread may still hold at fork time — the child would
+/// deadlock before it could report the failure. This writes fd 2 directly
+/// with async-signal-safe `write(2)` calls only (no allocation, no locks,
+/// stack-built message).
 fn log_child_error(op: &str, e: Errno) {
-    eprintln!("ferrokey-terminal: child {op} failed: {e}");
+    const PREFIX: &[u8] = b"ferrokey-terminal: child ";
+    const MIDDLE: &[u8] = b" failed: errno ";
+    // Stack-buffer the decimal errno (async-signal-safe itoa; Errno is a
+    // small positive C int in practice, but handle negatives defensively).
+    let mut digits = [0u8; 12];
+    let mut n = 0usize;
+    let mut v = (e as i32).unsigned_abs();
+    loop {
+        digits[n] = b'0' + (v % 10) as u8;
+        n += 1;
+        v /= 10;
+        if v == 0 {
+            break;
+        }
+    }
+    digits[..n].reverse();
+    crate::syscall::write_stderr(PREFIX);
+    crate::syscall::write_stderr(op.as_bytes());
+    crate::syscall::write_stderr(MIDDLE);
+    crate::syscall::write_stderr(&digits[..n]);
+    crate::syscall::write_stderr(b"\n");
 }
 
 #[cfg(test)]
@@ -356,6 +381,31 @@ mod tests {
                 ("COLORTERM".into(), "truecolor".into()),
             ],
         }
+    }
+
+    /// The post-fork error reporter must write the diagnostic to fd 2
+    /// without taking the stdio lock (which a fork child must never do).
+    /// Redirect fd 2 to a pipe, exercise the reporter, restore fd 2, then
+    /// assert the bytes arrived. fd 2 is restored before any fallible call
+    /// so a failure here cannot corrupt the test harness's stderr.
+    #[test]
+    fn log_child_error_writes_to_fd2_without_stdio_lock() {
+        use nix::unistd::{dup, pipe, read};
+        let (r, w) = pipe().unwrap();
+        let saved = dup(std::io::stderr()).unwrap(); // a fresh fd duplicating stderr
+        crate::syscall::dup2_for_tests(w.as_raw_fd(), 2); // fd 2 -> pipe
+        drop(w);
+        log_child_error("open slave", Errno::EACCES);
+        // Restore stderr BEFORE any fallible call: a failure below must not
+        // leave the test harness with redirected stderr.
+        crate::syscall::dup2_for_tests(saved.as_raw_fd(), 2);
+        let mut buf = [0u8; 128];
+        let n = read(&r, &mut buf).unwrap();
+        let msg = String::from_utf8_lossy(&buf[..n]).into_owned();
+        drop(saved);
+        drop(r);
+        assert!(msg.contains("open slave"), "got: {msg}");
+        assert!(msg.contains("errno 13"), "got: {msg}"); // EACCES == 13
     }
 
     #[test]

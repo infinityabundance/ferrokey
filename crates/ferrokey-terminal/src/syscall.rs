@@ -68,6 +68,46 @@ pub fn exit_now(code: i32) -> ! {
     unsafe { libc::_exit(code) }
 }
 
+/// `write(2, …)` to stderr (fd 2) — the only correct way for the fork child
+/// to report a failure between fork and exec.
+///
+/// `eprintln!`/`log!` take the stdio lock, which another thread may still
+/// hold at fork time: the post-fork child would deadlock before reporting
+/// the error. A raw `write` is async-signal-safe, allocation-free and
+/// lock-free.
+///
+/// # Safety
+///
+/// See the module-level contract. `bytes` is a valid, immutable slice for
+/// the duration of the call; fd 2 is the calling process's stderr.
+pub fn write_stderr(bytes: &[u8]) {
+    // SAFETY: contract above — `bytes` points to a valid byte slice for the
+    // duration of the syscall only (the kernel never retains it); `write` is
+    // async-signal-safe and returns without touching program state. Errors
+    // are ignored: this is a best-effort diagnostic on a path that is about
+    // to `_exit`.
+    unsafe {
+        libc::write(2, bytes.as_ptr().cast::<libc::c_void>(), bytes.len());
+    }
+}
+
+/// Test-only: `dup2(src, dst)` for the fd-2 redirection test in `child.rs`.
+/// Exists here because `nix` 0.31's `dup2` takes an `OwnedFd` for the
+/// destination, which cannot represent the process's own stderr safely.
+///
+/// # Safety
+///
+/// Both fds must be open in the calling process; `dst`'s previous target is
+/// closed by the kernel. The caller must restore `dst` before any fallible
+/// operation (a failed test must not leave the harness's stderr redirected).
+#[cfg(test)]
+pub(crate) fn dup2_for_tests(src: RawFd, dst: RawFd) {
+    // SAFETY: contract above — a single `dup2(2)` syscall, no retained state.
+    unsafe {
+        libc::dup2(src, dst);
+    }
+}
+
 /// `fork()` — the raw fork wrapper.
 ///
 /// # Safety

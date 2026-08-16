@@ -585,7 +585,10 @@ static TERMINAL: KeyboardView = KeyboardView {
     height: 354,
     base_width: 58.0,
     rows: &[
-        // Shortcut row: chords, never shell-command macros (§55, §57).
+        // Shortcut row: chords, never shell-command macros (§55, §57). The
+        // first five are the static chords; the shell-aware rows (WS5) swap
+        // this row for the detected shell's row (bash/zsh/fish/nushell/
+        // tmux/ssh) — the swap is presentation-only and keeps the logo.
         ViewRow {
             keys: &[
                 ViewKey::chord("Ctrl+C", 1.3, &["left-ctrl", "c"]),
@@ -596,9 +599,15 @@ static TERMINAL: KeyboardView = KeyboardView {
                 ViewKey::new("escape", 1.3),
                 ViewKey::new("home", 1.0),
                 ViewKey::new("end", 1.0),
+                // The brand mark (same decorative key as the compact view).
+                ViewKey::logo("logo", 0.9),
             ],
         },
-        // Number row + coding punctuation.
+        // Rows 2–6 mirror the compact view EXACTLY (the main keyboard's
+        // design language: the number/tab/home letter rows, the arrow
+        // cluster at the bottom-right with up directly above down, compose
+        // + menu, a single left-side shift/ctrl and the 4.9-unit space bar).
+        // The terminal differs only in row 1 (the shortcut row).
         ViewRow {
             keys: &[
                 ViewKey::new("grave", 1.0),
@@ -617,10 +626,9 @@ static TERMINAL: KeyboardView = KeyboardView {
                 ViewKey::new("backspace", 1.6),
             ],
         },
-        // Top letter row + bracket/backslash punctuation.
         ViewRow {
             keys: &[
-                ViewKey::new("tab", 1.4),
+                ViewKey::new("tab", 1.6),
                 ViewKey::new("q", 1.0),
                 ViewKey::new("w", 1.0),
                 ViewKey::new("e", 1.0),
@@ -636,10 +644,9 @@ static TERMINAL: KeyboardView = KeyboardView {
                 ViewKey::new("backslash", 1.0),
             ],
         },
-        // Home row + enter.
         ViewRow {
             keys: &[
-                ViewKey::new("caps-lock", 1.4),
+                ViewKey::new("caps-lock", 1.6),
                 ViewKey::new("a", 1.0),
                 ViewKey::new("s", 1.0),
                 ViewKey::new("d", 1.0),
@@ -654,10 +661,9 @@ static TERMINAL: KeyboardView = KeyboardView {
                 ViewKey::new("enter", 1.6),
             ],
         },
-        // Bottom letter row + coding punctuation.
         ViewRow {
             keys: &[
-                ViewKey::new("left-shift", 1.8),
+                ViewKey::new("left-shift", 1.6),
                 ViewKey::new("z", 1.0),
                 ViewKey::new("x", 1.0),
                 ViewKey::new("c", 1.0),
@@ -668,20 +674,20 @@ static TERMINAL: KeyboardView = KeyboardView {
                 ViewKey::new("comma", 1.0),
                 ViewKey::new("dot", 1.0),
                 ViewKey::new("slash", 1.0),
-                ViewKey::new("right-shift", 1.8),
+                ViewKey::new("up", 1.0),
             ],
         },
-        // Modifiers + navigation cluster.
         ViewRow {
             keys: &[
-                ViewKey::new("left-ctrl", 1.2),
-                ViewKey::new("left-alt", 1.2),
-                ViewKey::new("left-meta", 1.2),
-                ViewKey::new("space", 6.0),
-                ViewKey::new("delete", 1.0),
+                ViewKey::new("left-ctrl", 1.0),
+                ViewKey::new("left-meta", 1.0),
+                ViewKey::new("left-alt", 1.0),
+                ViewKey::new("space", 4.9),
+                ViewKey::new("right-alt", 1.0),
+                ViewKey::new("compose", 1.0),
+                ViewKey::new("menu", 1.0),
                 ViewKey::new("left", 1.0),
                 ViewKey::new("down", 1.0),
-                ViewKey::new("up", 1.0),
                 ViewKey::new("right", 1.0),
             ],
         },
@@ -909,6 +915,49 @@ mod tests {
             let (r, c) = find(name);
             assert_eq!(key_center(v, r, c), expected, "{name} center mismatch");
         }
+    }
+
+    #[test]
+    fn pinned_terminal_geometry() {
+        // The terminal view shares rows 2-6 with the compact view; row 1 is
+        // the shortcut row (chords + the brand mark). Pin the same anchors as
+        // the compact test plus the terminal-specific row so the geometry
+        // mirror (osk-geometry.py) cannot drift.
+        let v = view("terminal").unwrap();
+        let find = |name: &str| -> (usize, usize) {
+            for (r, row) in v.rows.iter().enumerate() {
+                if let Some(c) = row.keys.iter().position(|k| k.name == name) {
+                    return (r, c);
+                }
+            }
+            panic!("{name} not in terminal view");
+        };
+        for (name, expected) in [
+            ("Ctrl+C", (43.699_997, 32.0)),
+            ("logo", (648.49994, 32.0)),
+            ("backspace", (884.4, 90.0)),
+            ("a", (133.8, 206.0)),
+            ("space", (340.1, 322.0)),
+            ("up", (773.8, 264.0)),
+            ("down", (773.2, 322.0)),
+        ] {
+            let (r, c) = find(name);
+            assert_eq!(key_center(v, r, c), expected, "{name} center mismatch");
+        }
+        // The compact design language holds: up sits directly above down,
+        // same size (the shared 4.9-unit space bar aligns the bottom-row
+        // arrow cluster under it).
+        let up = key_center(v, find("up").0, find("up").1);
+        let down = key_center(v, find("down").0, find("down").1);
+        assert!(
+            (up.0 - down.0).abs() <= 1.0,
+            "up ({up:?}) must be centered over down ({down:?})"
+        );
+        let above = up.1 + VIEW_KEY_HEIGHT + VIEW_SPACING;
+        assert!(
+            (above - down.1).abs() <= 1.0,
+            "up must sit directly above down ({up:?} vs {down:?})"
+        );
     }
 
     #[test]

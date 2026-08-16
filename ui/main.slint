@@ -176,9 +176,10 @@ export component MainWindow inherits Window {
     }
 
     // Resize grip (bottom-right corner) — visual only; the gesture is
-    // hit-tested by the Rust window-gesture layer (RESIZE_CORNER). Hidden in
-    // terminal mode: there the corner belongs to the terminal pane.
-    if !root.terminal-mode: Rectangle {
+    // hit-tested by the Rust window-gesture layer (RESIZE_CORNER). Always
+    // visible: in terminal mode it overlays the terminal pane's corner, which
+    // is exactly where the resize gesture lives.
+    Rectangle {
         x: root.width - 16px;
         y: root.height - 16px;
         width: 12px;

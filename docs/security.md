@@ -12,6 +12,7 @@ evidence (§91).
 > UI never accesses `/dev/uinput` directly; uinput configuration is isolated
 > to startup; the runtime broker runs non-root with zero capabilities,
 > NO_NEW_PRIVS, syscall filtering, no network, no physical-input access,
+> core dumps disabled and non-dumpable,
 > and an immutable virtual-keyboard capability set; hostile behavior is
 > tested against instrumented guest kernels.
 
@@ -34,6 +35,8 @@ security courts (SKIP is never accepted for these — §95):
 SEC.PRIV.NON_ROOT ............. PASS
 SEC.PRIV.CAPS_EMPTY ........... PASS
 SEC.PRIV.NO_NEW_PRIVS ......... PASS
+SEC.PRIV.CORE_DUMPS_OFF ....... PASS
+SEC.PRIV.NON_DUMPABLE ......... PASS
 
 SEC.UINPUT.SINGLE_DEVICE ...... PASS
 SEC.UINPUT.CAPABILITY_FIXED ... PASS
@@ -66,7 +69,8 @@ HOST CONTAMINATION ............ NONE
 The `kernel-security` court family reports, from observations:
 
 ```text
-BROKER            non-root, zero caps (incl. bounding set), NNP, seccomp
+BROKER            non-root, zero caps (incl. bounding set), NNP, seccomp,
+                  core dumps off, non-dumpable
 KERNEL INTERFACE  single device, immutable caps, no runtime ioctl,
                   no reopen, no physical input, no unexpected event classes
 NETWORK           AF_INET / AF_INET6 / AF_PACKET denied
@@ -95,6 +99,7 @@ Each security-court run records (generated from observations):
   "ambient_capabilities": "0000000000000000",
   "no_new_privs": true,
   "seccomp": true,
+  "core_dumps_disabled": true,
   "uinput_devices": 1,
   "network_families": ["AF_UNIX"],
   "physical_input_access": false,

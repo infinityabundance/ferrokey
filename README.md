@@ -19,7 +19,8 @@ flaky, race-prone keyboard state. Ferrokey sidesteps the entire problem:
 - the UI is **unprivileged** and renders with Slint;
 - key events travel over a tiny binary protocol on a Unix socket to
   `ferrokeyd`, the **constrained broker**: it runs non-root with zero
-  capabilities, NO_NEW_PRIVS and a seccomp allowlist, and owns one
+  capabilities, NO_NEW_PRIVS, a seccomp allowlist, core dumps disabled and
+  non-dumpable, and owns one
   pre-created **uinput virtual keyboard** (§ see `docs/security.md`);
 - the kernel treats those events exactly like a real keyboard — the focused
   window receives them, and focus never moves.
@@ -36,7 +37,8 @@ flaky, race-prone keyboard state. Ferrokey sidesteps the entire problem:
                  ┌──────────────▼───────────────┐
                  │  ferrokeyd serve (constrained│
                  │  broker: non-root, zero caps,│
-                 │  NO_NEW_PRIVS, seccomp)      │
+                 │  NO_NEW_PRIVS, seccomp,      │
+                 │  no core dumps, non-dumpable)│
                  └──────────────┬───────────────┘
                                 │ EV_KEY writes to the ONE pre-created
                                 │ virtual keyboard (fd adopted from the
@@ -109,8 +111,9 @@ cargo test --workspace
 
 `ferrokeyd` is a **constrained broker**, not a privileged daemon: the runtime
 (`serve`) drops to a dedicated unprivileged identity with zero capabilities,
-NO_NEW_PRIVS, a seccomp allowlist, no network and no arbitrary opens before
-accepting any client. The production deployment is the hardened systemd unit
+NO_NEW_PRIVS, a seccomp allowlist, core dumps disabled, non-dumpable, no
+network and no arbitrary opens before accepting any client. The production
+deployment is the hardened systemd unit
 (`PACKAGING/ferrokeyd.service`, §38-§40) — the human user is **never** granted
 `/dev/uinput` (§4).
 

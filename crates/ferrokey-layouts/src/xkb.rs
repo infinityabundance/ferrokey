@@ -14,7 +14,9 @@
 //! [`Layout`]; without it, Ferrokey uses its own built-in YAML layouts (the
 //! default and the behaviour the compatibility courts validate).
 
-use ferrokey_core::layout::{DeadKey, KeyDefinition, KeySymbol, Layout};
+#[cfg(feature = "xkb")]
+use ferrokey_core::layout::DeadKey;
+use ferrokey_core::layout::{KeyDefinition, KeySymbol, Layout};
 use ferrokey_core::modifier::ModifierSet;
 
 /// The four XKB levels of a key.

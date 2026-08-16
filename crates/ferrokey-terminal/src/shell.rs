@@ -22,6 +22,17 @@
 use crate::key_encoder::TerminalKeyEncoder;
 use std::path::Path;
 
+/// The **default** rendered width factor of every shell-row key (the shortcut
+/// row that replaces the terminal view's static row 1 when a shell is
+/// detected). One source of truth for both the UI rendering
+/// (`set_terminal_shortcut_row`) and the pointer bridge's hit-testing of the
+/// rendered row — the two must agree or clicking a shell button would
+/// hit-test against the static row's geometry and play the wrong chord.
+///
+/// Individual keys may override this with a wider factor when their label
+/// would not fit at the default width (see [`ShellRowKey::width`]).
+pub const SHELL_KEY_WIDTH: f32 = 1.25;
+
 // ── shell identity ──────────────────────────────────────────────────────────
 
 /// The identified interactive shell.
@@ -243,7 +254,8 @@ impl ShellContext {
 
 // ── shell key rows (pure keyboard semantics) ────────────────────────────────
 
-/// One shell-row action: a label and the **key sequence** it plays.
+/// One shell-row action: a label, its rendered width factor and the **key
+/// sequence** it plays.
 ///
 /// The sequence is a list of press-groups: each group is pressed and fully
 /// released before the next group starts. This is what makes tmux prefix
@@ -251,10 +263,14 @@ impl ShellContext {
 /// keyboard semantics: `[[Ctrl, B], [Shift, D5]]` presses Ctrl+B, releases
 /// it, then presses Shift+5. Simple chords are single groups
 /// (`[[Ctrl, C]]`) — identical to the view-level chord mechanism.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShellRowKey {
     /// The button label (e.g. "Ctrl+R").
     pub label: &'static str,
+    /// Rendered width factor (relative to the view's base key width). Most
+    /// keys use [`SHELL_KEY_WIDTH`]; a key whose label does not fit at that
+    /// width carries an explicit wider factor so the label is never cropped.
+    pub width: f32,
     /// The key sequence, as press-groups of physical keys.
     pub sequence: &'static [&'static [ferrokey_core::PhysicalKey]],
 }
@@ -267,34 +283,42 @@ use ferrokey_core::PhysicalKey as K;
 pub const GENERIC_ROW: &[ShellRowKey] = &[
     ShellRowKey {
         label: "Ctrl+C",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::C]],
     },
     ShellRowKey {
         label: "Ctrl+D",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::D]],
     },
     ShellRowKey {
         label: "Ctrl+Z",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::Z]],
     },
     ShellRowKey {
         label: "Ctrl+L",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::L]],
     },
     ShellRowKey {
         label: "Ctrl+A",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::A]],
     },
     ShellRowKey {
         label: "Esc",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::Escape]],
     },
     ShellRowKey {
         label: "Home",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::Home]],
     },
     ShellRowKey {
         label: "End",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::End]],
     },
 ];
@@ -308,34 +332,45 @@ pub const GENERIC_ROW: &[ShellRowKey] = &[
 pub const BASH_ROW: &[ShellRowKey] = &[
     ShellRowKey {
         label: "Ctrl+R",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::R]],
     },
     ShellRowKey {
         label: "Ctrl+K",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::K]],
     },
     ShellRowKey {
         label: "Ctrl+Y",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::Y]],
     },
     ShellRowKey {
         label: "Ctrl+U",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::U]],
     },
     ShellRowKey {
         label: "Ctrl+W",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::W]],
     },
     ShellRowKey {
         label: "Ctrl+A",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::A]],
     },
     ShellRowKey {
         label: "Ctrl+E",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::E]],
     },
+    // "Ctrl+X Ctrl+E" (readline edit-command-line) is the longest label in
+    // the row; it needs a wider key or it would be cropped at the default
+    // width.
     ShellRowKey {
         label: "Ctrl+X Ctrl+E",
+        width: 2.4,
         sequence: &[&[K::LeftCtrl, K::X], &[K::LeftCtrl, K::E]],
     },
 ];
@@ -354,34 +389,44 @@ pub const BASH_ROW: &[ShellRowKey] = &[
 pub const ZSH_ROW: &[ShellRowKey] = &[
     ShellRowKey {
         label: "Ctrl+R",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::R]],
     },
     ShellRowKey {
         label: "Ctrl+A",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::A]],
     },
     ShellRowKey {
         label: "Ctrl+E",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::E]],
     },
     ShellRowKey {
         label: "Ctrl+U",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::U]],
     },
     ShellRowKey {
         label: "Ctrl+K",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::K]],
     },
     ShellRowKey {
         label: "Ctrl+W",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::W]],
     },
     ShellRowKey {
         label: "Ctrl+Y",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::Y]],
     },
+    // Same wide key as the bash row: the label does not fit at the default
+    // width.
     ShellRowKey {
         label: "Ctrl+X Ctrl+E",
+        width: 2.4,
         sequence: &[&[K::LeftCtrl, K::X], &[K::LeftCtrl, K::E]],
     },
 ];
@@ -398,30 +443,39 @@ pub const ZSH_ROW: &[ShellRowKey] = &[
 pub const FISH_ROW: &[ShellRowKey] = &[
     ShellRowKey {
         label: "Tab",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::Tab]],
     },
+    // The arrow glyph plus "accept" needs a wider key than the default
+    // (its label would be cropped at 1.25).
     ShellRowKey {
         label: "→ accept",
+        width: 1.9,
         sequence: &[&[K::Right]],
     },
     ShellRowKey {
         label: "Ctrl+F",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::F]],
     },
     ShellRowKey {
         label: "Up",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::Up]],
     },
     ShellRowKey {
         label: "Down",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::Down]],
     },
     ShellRowKey {
         label: "Ctrl+U",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::U]],
     },
     ShellRowKey {
         label: "Ctrl+W",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::W]],
     },
 ];
@@ -435,30 +489,37 @@ pub const FISH_ROW: &[ShellRowKey] = &[
 pub const NUSHELL_ROW: &[ShellRowKey] = &[
     ShellRowKey {
         label: "Ctrl+R",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::R]],
     },
     ShellRowKey {
         label: "Ctrl+A",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::A]],
     },
     ShellRowKey {
         label: "Ctrl+E",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::E]],
     },
     ShellRowKey {
         label: "Ctrl+U",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::LeftCtrl, K::U]],
     },
     ShellRowKey {
         label: "Tab",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::Tab]],
     },
     ShellRowKey {
         label: "Up",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::Up]],
     },
     ShellRowKey {
         label: "Down",
+        width: SHELL_KEY_WIDTH,
         sequence: &[&[K::Down]],
     },
 ];
@@ -467,24 +528,31 @@ pub const NUSHELL_ROW: &[ShellRowKey] = &[
 /// prefix (§5.11). Every action is a keyboard chord through the normal
 /// encoder — never tmux IPC, never a hidden command.
 pub const TMUX_ROW: &[ShellRowKey] = &[
+    // The "prefix <key>" labels are longer than the generic chord labels, so
+    // every tmux key is wider than the default (labels would crop at 1.25).
     ShellRowKey {
         label: "prefix d",
+        width: 1.6,
         sequence: &[&[K::LeftCtrl, K::B], &[K::D]],
     },
     ShellRowKey {
         label: "prefix c",
+        width: 1.6,
         sequence: &[&[K::LeftCtrl, K::B], &[K::C]],
     },
     ShellRowKey {
         label: "prefix n",
+        width: 1.6,
         sequence: &[&[K::LeftCtrl, K::B], &[K::N]],
     },
     ShellRowKey {
         label: "prefix %",
+        width: 1.6,
         sequence: &[&[K::LeftCtrl, K::B], &[K::LeftShift, K::D5]],
     },
     ShellRowKey {
         label: "prefix \"",
+        width: 1.6,
         sequence: &[&[K::LeftCtrl, K::B], &[K::LeftShift, K::Apostrophe]],
     },
 ];

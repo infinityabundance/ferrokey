@@ -1079,7 +1079,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokey"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "ferrokey-core",
@@ -1155,7 +1155,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokey-terminal"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "ab_glyph",
  "ferrokey-core",
@@ -1180,7 +1180,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokeyd"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "ferrokey-core",

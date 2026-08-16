@@ -13,10 +13,12 @@ on:
 
 jobs:
   fuzz:
-    # Rule 71: the protocol decoder is a privilege boundary, so the
-    # "hostile-input resistant" claim gets a real libFuzzer harness in CI.
-    # libFuzzer needs nightly; the deterministic stress tests in the unit
-    # court cover the same property on stable. Timeboxed so PRs stay fast.
+    # Rule 71: the protocol decoder and the layout parser are both
+    # hostile-input surfaces (a client frame / a user layout must never crash
+    # the loader), so the "hostile-input resistant" claim gets a real
+    # libFuzzer harness for each in CI. libFuzzer needs nightly; the
+    # deterministic stress tests in the unit court cover the same properties
+    # on stable. Timeboxed so PRs stay fast.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -28,6 +30,13 @@ jobs:
         run: |
           cd crates/ferrokey-protocol/fuzz
           cargo +nightly fuzz run fuzz_decoder -- \
+            -max_total_time=180 \
+            -rss_limit_mb=2048 \
+            -timeout=10
+      - name: Fuzz the layout parser
+        run: |
+          cd crates/ferrokey-layouts/fuzz
+          cargo +nightly fuzz run fuzz_parser -- \
             -max_total_time=180 \
             -rss_limit_mb=2048 \
             -timeout=10

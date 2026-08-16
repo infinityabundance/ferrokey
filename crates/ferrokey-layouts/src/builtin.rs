@@ -259,6 +259,42 @@ mod tests {
         assert!(layout.keys.is_empty());
     }
 
+    /// Deterministic hostile-input fuzz over the layout YAML parser.
+    ///
+    /// A seeded PRNG (xorshift64*) generates arbitrary byte streams that are
+    /// handed to `parse_layout` as lossy UTF-8 (YAML is byte-oriented, so
+    /// arbitrary bytes are legal input). The parser — and, for inputs that
+    /// parse, the xkb validation gate — must never panic. This runs in
+    /// ordinary `cargo test` on stable, so the "hostile layout data cannot
+    /// crash the loader" claim is continuously verified even without the
+    /// nightly cargo-fuzz harness (`crates/ferrokey-layouts/fuzz`).
+    #[test]
+    fn hostile_yaml_never_panics_and_stays_bounded() {
+        fn next(rng: &mut u64) -> u64 {
+            *rng ^= *rng << 13;
+            *rng ^= *rng >> 7;
+            *rng ^= *rng << 17;
+            *rng
+        }
+        let mut rng: u64 = 0x9E37_79B9_7F4A_7C15;
+        // Under Miri the full iteration count is impractically slow; the
+        // interpreter catches the same UB classes on a smaller sample.
+        let iters: u64 = if cfg!(miri) { 200 } else { 20_000 };
+        for _ in 0..iters {
+            let len = (next(&mut rng) % 4096) as usize;
+            let mut bytes = vec![0u8; len];
+            for b in &mut bytes {
+                *b = (next(&mut rng) >> 24) as u8;
+            }
+            // Malformed YAML is *expected*: the parser must return an error,
+            // never panic or over-allocate.
+            let text = String::from_utf8_lossy(&bytes);
+            if let Ok(layout) = parse_layout(&text) {
+                let _ = validate_layout(&layout);
+            }
+        }
+    }
+
     #[test]
     fn shifted_defaults_to_primary() {
         let yaml = r#"

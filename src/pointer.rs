@@ -221,7 +221,39 @@ impl PointerBridge {
     /// The key under a physical-pixel point, if any.
     fn key_at(&self, x: f64, y: f64) -> Option<&'static str> {
         let (vx, vy) = self.view_point(x, y);
+        // When a shell row is active it OWNS row 1's input: it renders with
+        // its own key widths, so it must be hit-tested against its own rects
+        // (the static row is not rendered underneath).
+        if self.shell_row.is_some() && self.in_shell_row_band(vy) {
+            return self.shell_key_at(vx, vy);
+        }
         views::key_at(self.view, vx, vy)
+    }
+
+    /// Whether a view-space point lies in row 1's band (the shortcut row).
+    fn in_shell_row_band(&self, vy: f32) -> bool {
+        (views::VIEW_PAD..=views::VIEW_PAD + views::VIEW_KEY_HEIGHT).contains(&vy)
+    }
+
+    /// Hit-test a point against the ACTIVE shell row's own geometry: row 1,
+    /// every key `width × base_width` wide with the standard gap (exactly how
+    /// `set_terminal_shortcut_row` renders it — each key's own width factor
+    /// from shell.rs, defaulting to `SHELL_KEY_WIDTH`). Returns the shell
+    /// key's label; `None` for gaps or outside the row.
+    fn shell_key_at(&self, vx: f32, vy: f32) -> Option<&'static str> {
+        let row = self.shell_row?;
+        if !self.in_shell_row_band(vy) {
+            return None;
+        }
+        let mut x0 = views::VIEW_PAD;
+        for key in row {
+            let w = key.width * self.view.base_width;
+            if vx >= x0 && vx <= x0 + w {
+                return Some(key.label);
+            }
+            x0 += w + views::VIEW_SPACING;
+        }
+        None
     }
 
     /// The touch point in view (logical) coordinates.
@@ -235,6 +267,14 @@ impl PointerBridge {
     /// rects when disabled.
     fn touch_key_at(&mut self, x: f64, y: f64) -> Option<&'static str> {
         let p = self.logical_point(x, y);
+        // A shell row owns row 1's input (see key_at); its rendered geometry
+        // is not part of the adaptive basis, so it wins before adaptation.
+        if self.shell_row.is_some() {
+            let (vx, vy) = (p.x as f32, p.y as f32);
+            if self.in_shell_row_band(vy) {
+                return self.shell_key_at(vx, vy);
+            }
+        }
         if let Some(ag) = &mut self.adaptive {
             let (hit, confidence) = ag.hit_test_confidence(p);
             match hit {

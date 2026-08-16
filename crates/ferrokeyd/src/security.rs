@@ -137,6 +137,48 @@ pub fn no_new_privs_active() -> io::Result<bool> {
     nix::sys::prctl::get_no_new_privs().map_err(io::Error::from)
 }
 
+/// Disable core dumps (`RLIMIT_CORE = 0`).
+///
+/// A core dump of the broker would be a plaintext capture of the keys it
+/// processed — the one leak category specific to being a *keyboard* (the
+/// data it guards is typed input, not credentials or tokens). Set both the
+/// soft and hard limits so the process can never raise it again.
+///
+/// # Postconditions
+/// * On `Ok`, both the soft and hard `RLIMIT_CORE` limits are 0 (see
+///   [`core_dump_disabled`]); the change is permanent for the process.
+pub fn set_core_dump_disabled() -> io::Result<()> {
+    nix::sys::resource::setrlimit(nix::sys::resource::Resource::RLIMIT_CORE, 0, 0)
+        .map_err(io::Error::from)
+}
+
+/// Whether core dumps are disabled: the soft `RLIMIT_CORE` limit is 0.
+pub fn core_dump_disabled() -> io::Result<bool> {
+    nix::sys::resource::getrlimit(nix::sys::resource::Resource::RLIMIT_CORE)
+        .map(|(cur, _)| cur == 0)
+        .map_err(io::Error::from)
+}
+
+/// Prevent the process from being traced or dumped (`PR_SET_DUMPABLE = 0`).
+///
+/// The broker is an unprivileged process (no setuid bit), so it is not
+/// dumpable by default — but a keyboard must never rely on ambient defaults:
+/// making non-dumpability explicit closes ptrace/`/proc/<pid>/mem` access
+/// and core dumps even if a future deployment changes the file modes.
+///
+/// # Postconditions
+/// * On `Ok`, `PR_GET_DUMPABLE` reports 0 (see [`non_dumpable`]).
+pub fn set_non_dumpable() -> io::Result<()> {
+    nix::sys::prctl::set_dumpable(false).map_err(io::Error::from)
+}
+
+/// Whether the process is non-dumpable (`PR_GET_DUMPABLE == 0`).
+pub fn non_dumpable() -> io::Result<bool> {
+    nix::sys::prctl::get_dumpable()
+        .map(|d| !d)
+        .map_err(io::Error::from)
+}
+
 /// The current effective uid.
 pub fn euid() -> u32 {
     nix::unistd::geteuid().as_raw() as u32
@@ -167,12 +209,15 @@ pub fn check_refuses_root(allow_root: bool) -> Result<(), SecurityError> {
 /// 1. refuse root unless the dev override is explicit (§7)
 /// 2. zero capabilities and verify they stay zero (§5)
 /// 3. set NO_NEW_PRIVS and verify (§6)
-/// 4. FD inventory must match the expected baseline exactly (§37)
+/// 4. disable core dumps (`RLIMIT_CORE = 0`) and verify
+/// 5. make the process non-dumpable (`PR_SET_DUMPABLE = 0`) and verify
+/// 6. FD inventory must match the expected baseline exactly (§37)
 ///
 /// # Postconditions
-/// * On `Ok`, the process is non-root, capability-free and NO_NEW_PRIVS is
-///   active; the FD set exactly matches the inventory baseline. The caller
-///   then installs seccomp (the last freeze step).
+/// * On `Ok`, the process is non-root, capability-free, NO_NEW_PRIVS is
+///   active, core dumps are disabled and the process is non-dumpable; the FD
+///   set exactly matches the inventory baseline. The caller then installs
+///   seccomp (the last freeze step).
 pub fn verify_before_freeze(
     allow_root: bool,
     expected_fds: &BTreeSet<i32>,
@@ -194,6 +239,21 @@ pub fn verify_before_freeze(
         return Err(SecurityError::NoNewPrivsNotSet);
     }
 
+    // Core dumps: disable, then prove. A core dump is a plaintext capture
+    // of every key the broker processed; if the kernel refuses, fail
+    // startup — never serve with the leak surface open.
+    set_core_dump_disabled().map_err(SecurityError::CoreDump)?;
+    if !core_dump_disabled().map_err(SecurityError::CoreDump)? {
+        return Err(SecurityError::CoreDumpNotDisabled);
+    }
+
+    // Dumpability: make non-dumpable explicit, then prove. A keyboard
+    // must not be traceable or dumpable even if deployment modes change.
+    set_non_dumpable().map_err(SecurityError::CoreDump)?;
+    if !non_dumpable().map_err(SecurityError::CoreDump)? {
+        return Err(SecurityError::CoreDumpNotDisabled);
+    }
+
     // FD inventory: prove the process holds exactly the expected set. Once
     // seccomp is installed (next step) `open` is impossible, so the set
     // cannot change afterwards (§35, §37).
@@ -210,18 +270,29 @@ pub fn verify_before_freeze(
         egid: egid(),
         capabilities: caps,
         no_new_privs: true,
+        core_dump_disabled: true,
+        non_dumpable: true,
         seccomp: false, // installed by the caller next; proved by probes
         fds: actual,
     })
 }
 
 /// A read-only report of the broker's security state (§104).
+///
+/// The booleans are distinct *observed kernel states* (each set-and-proven
+/// independently during the freeze); they are not flags driving behaviour,
+/// so the state-machine refactor the lint suggests does not apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct SecurityReport {
     pub euid: u32,
     pub egid: u32,
     pub capabilities: CapabilityState,
     pub no_new_privs: bool,
+    /// `RLIMIT_CORE` soft limit is 0 (core dumps disabled).
+    pub core_dump_disabled: bool,
+    /// `PR_GET_DUMPABLE` reports 0 (non-dumpable).
+    pub non_dumpable: bool,
     pub seccomp: bool,
     pub fds: BTreeSet<i32>,
 }
@@ -230,7 +301,7 @@ impl std::fmt::Display for SecurityReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "euid={} egid={} caps=[{}] no_new_privs={} seccomp={} fds={:?}",
+            "euid={} egid={} caps=[{}] no_new_privs={} core_dumps=off dumpable=no seccomp={} fds={:?}",
             self.euid,
             self.egid,
             self.capabilities,
@@ -254,6 +325,10 @@ pub enum SecurityError {
     NoNewPrivs(io::Error),
     #[error("NO_NEW_PRIVS is not active: refusing to serve (§59)")]
     NoNewPrivsNotSet,
+    #[error("cannot disable core dumps / make the process non-dumpable: {0}")]
+    CoreDump(io::Error),
+    #[error("core dumps are not disabled or the process is still dumpable: refusing to serve")]
+    CoreDumpNotDisabled,
     #[error("seccomp enforcement could not be proven (§61, §92)")]
     SeccompNotProven,
     #[error("unexpected open file descriptors: expected {expected:?}, found {actual:?} (§37)")]
@@ -444,6 +519,23 @@ mod tests {
         capset_empty().unwrap();
         let after = capget().unwrap();
         assert!(after.all_zero() || before == after);
+    }
+
+    #[test]
+    fn core_dump_and_dumpability_hardening_is_provable() {
+        // The hardening must be applied-and-provable in a test process, so a
+        // future regression in the setter or the verifier is caught on
+        // stable without a VM court.
+        set_core_dump_disabled().unwrap();
+        assert!(
+            core_dump_disabled().unwrap(),
+            "RLIMIT_CORE must read back as 0 after disabling"
+        );
+        set_non_dumpable().unwrap();
+        assert!(
+            non_dumpable().unwrap(),
+            "PR_GET_DUMPABLE must read back as non-dumpable"
+        );
     }
 
     #[test]

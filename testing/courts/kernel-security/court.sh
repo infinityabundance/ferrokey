@@ -120,6 +120,24 @@ else
     bad "SEC.PRIV.003 no_new_privs NOT set (NoNewPrivs=$NNP)"
 fi
 
+# ── SEC.PRIV.005/006: core dumps disabled + non-dumpable ────────────────────
+# A core dump of the broker would be a plaintext capture of every key it
+# processed — the leak surface specific to being a keyboard. The freeze
+# sets RLIMIT_CORE = 0 (soft and hard) and PR_SET_DUMPABLE = 0 and proves
+# both internally; /proc/pid/limits is world-readable.
+CORE_LIMIT=$(awk '$1 == "Max" && $2 == "core" { print $5; exit }' "/proc/$SERVE_PID/limits" 2>/dev/null || true)
+if [ "$CORE_LIMIT" = "0" ]; then
+    ok "SEC.PRIV.005 core dumps disabled (soft RLIMIT_CORE=$CORE_LIMIT)"
+else
+    bad "SEC.PRIV.005 core dumps NOT disabled (RLIMIT_CORE=$CORE_LIMIT)"
+fi
+if grep -q "core_dumps=off dumpable=no" "$OUT/ferrokeyd.log"; then
+    ok "SEC.PRIV.006 broker froze non-dumpable (PR_SET_DUMPABLE=0 proven)"
+else
+    bad "SEC.PRIV.006 broker hardening report missing"
+    grep "sandbox frozen" "$OUT/ferrokeyd.log" | tail -2 || true
+fi
+
 # ── SEC.SECCOMP.001: seccomp mode (§32) ────────────────────────────────────
 SECCMODE=$(status_of "$SERVE_PID" Seccomp)
 if [ "$SECCMODE" = "2" ]; then
@@ -411,10 +429,10 @@ fi
 
 # ── SEC.MANIFEST: generated from observations (§90, §91) ───────────────────
 # Runs BEFORE the SIGKILL block: the manifest reads /proc/<pid>/status.
-python3 - "$OUT" "$SERVE_PID" "$BROKER_EUID" "$CAPINH" "$CAPPRM" "$CAPEFF" "$CAPAMB" "$NNP" "$SECCMODE" <<'EOF'
+python3 - "$OUT" "$SERVE_PID" "$BROKER_EUID" "$CAPINH" "$CAPPRM" "$CAPEFF" "$CAPAMB" "$NNP" "$SECCMODE" "$CORE_LIMIT" <<'EOF'
 import hashlib, json, os, sys
 out, pid = sys.argv[1], sys.argv[2]
-euid, capinh, caprm, capeff, capamb, nnp, seccomp = sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7], sys.argv[8], sys.argv[9]
+euid, capinh, caprm, capeff, capamb, nnp, seccomp, core_limit = sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7], sys.argv[8], sys.argv[9], sys.argv[10]
 status = open(f"/proc/{pid}/status").read() if os.path.exists(f"/proc/{pid}/status") else ""
 def sha(p):
     try:
@@ -433,6 +451,7 @@ manifest = {
     "bounding_capabilities": status.split("CapBnd:")[1].split()[0] if "CapBnd:" in status else "unknown",
     "no_new_privs": nnp == "1",
     "seccomp": seccomp == "2",
+    "core_dumps_disabled": core_limit == "0",
     "uinput_devices": int(open(f"{out}/devices.txt").read().count("Name=\"Ferrokey Virtual Keyboard\"")) if os.path.exists(f"{out}/devices.txt") else -1,
     "network_families": ["AF_UNIX"],
     "physical_input_access": False,
@@ -447,7 +466,7 @@ manifest = {
 }
 json.dump(manifest, open(f"{out}/security-manifest.json", "w"), indent=2)
 EOF
-if [ -s "$OUT/security-manifest.json" ] && python3 -c "import json; m=json.load(open('$OUT/security-manifest.json')); assert m['euid'] != 0 and m['seccomp'] and m['no_new_privs']" 2>/dev/null; then
+if [ -s "$OUT/security-manifest.json" ] && python3 -c "import json; m=json.load(open('$OUT/security-manifest.json')); assert m['euid'] != 0 and m['seccomp'] and m['no_new_privs'] and m['core_dumps_disabled']" 2>/dev/null; then
     ok "SEC.MANIFEST security manifest generated from observations"
 else
     bad "SEC.MANIFEST security manifest missing or inconsistent"

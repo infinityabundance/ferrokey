@@ -1,0 +1,4 @@
+# cargo-fuzz work products — regenerated on every CI run.
+artifacts/
+corpus/
+target/

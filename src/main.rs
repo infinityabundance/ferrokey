@@ -83,6 +83,11 @@ enum WindowGesture {
         start_scale: f32,
         grab_x: f64,
         grab_y: f64,
+        /// The terminal pane height (physical px) captured at grab time;
+        /// 0 outside terminal mode. The window height on resize is the
+        /// scaled keyboard PLUS this constant pane (§25: the pane is not
+        /// part of the keyboard scale).
+        pane_phys: u32,
     },
 }
 
@@ -584,7 +589,14 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
 
     // Apply the window→view transform (uniform keyboard scale + centering
     // below the title strip) once at startup; Resized events re-apply it.
-    let s0 = apply_view_transform(&ui, &platform, &mut bridge, view);
+    // In terminal mode the window height includes the fixed pane, so the
+    // scale is derived from the keyboard's own height budget only.
+    let initial_pane_phys = if terminal_cfg.enabled {
+        (terminal_cfg.pane_height.max(200) as f32 * platform.scale().max(0.25)).round() as u32
+    } else {
+        0
+    };
+    let s0 = apply_view_transform(&ui, &platform, &mut bridge, view, initial_pane_phys);
     let mut keyboard_h_phys =
         ((views::TITLE_H + view.height as f32 * s0) * platform.scale().max(0.25)) as u32;
 
@@ -651,18 +663,38 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
             }
         };
         let now = Instant::now();
+        // The window size is the frame's gesture/pane geometry baseline
+        // (used for the resize-corner hit-tests in the pane router below).
+        let win_size = platform.size();
+        let (gw, gh) = (win_size.width, win_size.height);
         for event in events {
             // A window resize (user gesture or compositor) re-derives the
-            // keyboard scale + offset, and the terminal pane boundary.
-            if let SurfaceEvent::Resized { .. } = event {
-                let s = apply_view_transform(&ui, &platform, &mut bridge, view);
+            // keyboard scale + offset, and the terminal pane boundary. In
+            // terminal mode the pane is CONSTANT across keyboard resizes (the
+            // gesture keeps it), so while a resize gesture is active its
+            // captured pane is authoritative for the scale derivation —
+            // deriving it from `height − old keyboard height` would inflate
+            // the pane by the keyboard's own growth and clamp the scale at
+            // the previous size (the window would only ever grow wider).
+            if let SurfaceEvent::Resized { height, .. } = event {
+                let pane_phys = match &gesture {
+                    WindowGesture::Resize { pane_phys, .. } => *pane_phys,
+                    _ if terminal_cfg.enabled => height.saturating_sub(keyboard_h_phys),
+                    _ => 0,
+                };
+                let s = apply_view_transform(&ui, &platform, &mut bridge, view, pane_phys);
                 current_view_scale = s;
                 keyboard_h_phys =
                     ((views::TITLE_H + view.height as f32 * s) * platform.scale().max(0.25)) as u32;
             }
-            // Terminal-pane events never reach the OSK bridge (§25).
+            // Terminal-pane events never reach the OSK bridge (§25), except
+            // while a window gesture is active (drag/resize moves inside the
+            // pane band must reach the gesture layer) and except the
+            // bottom-right resize corner itself.
             if let Some(term) = &terminal {
-                if event_in_terminal_pane(event, keyboard_h_phys) {
+                if matches!(gesture, WindowGesture::Idle)
+                    && event_in_terminal_pane(event, keyboard_h_phys, gw, gh)
+                {
                     route_terminal_event(&mut terminal_input, term, event, now, keyboard_h_phys);
                     continue;
                 }
@@ -681,8 +713,6 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
             // never reach the pointer bridge, so no key fires); the gesture
             // tracks deltas in surface-local pointer coordinates, so no
             // screen-coordinate knowledge is needed.
-            let win_size = platform.size();
-            let (gw, gh) = (win_size.width, win_size.height);
             match event {
                 SurfaceEvent::PointerPressed {
                     x,
@@ -711,6 +741,10 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
                             start_scale: current_view_scale,
                             grab_x: x,
                             grab_y: y,
+                            // The pane (window space below the keyboard) is
+                            // constant across keyboard resizes; capture it so
+                            // the resized window keeps it (§25).
+                            pane_phys: gh.saturating_sub(keyboard_h_phys),
                         };
                         log::debug!("window resize started at ({x:.0},{y:.0})");
                         continue;
@@ -753,12 +787,15 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
                         start_scale,
                         grab_x,
                         grab_y,
+                        pane_phys,
                     } => {
                         // Uniform (diagonal) scaling: the window always
                         // equals the keyboard scale, so no dead whitespace
                         // ever grows — dragging right or down scales the WHOLE
                         // OSK. Scale = start × (pointer distance from the
-                        // fixed top-left corner ÷ distance at grab).
+                        // fixed top-left corner ÷ distance at grab). In
+                        // terminal mode the window height is the scaled
+                        // keyboard PLUS the constant pane captured at grab.
                         let dist0 = (grab_x * grab_x + grab_y * grab_y).sqrt().max(1.0);
                         let dist = (x * x + y * y).sqrt();
                         let mut s = (start_scale * (dist / dist0) as f32)
@@ -766,13 +803,16 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
                         // The window must stay on the output.
                         let ps = platform.scale().max(0.25);
                         if let Some((out_w, out_h)) = platform.output_bounds() {
-                            let s_max = ((out_w as f32 / view.width as f32)
-                                .min((out_h as f32 - views::TITLE_H) / view.height as f32))
+                            let s_max = ((out_w as f32 / view.width as f32).min(
+                                (out_h as f32 - views::TITLE_H - pane_phys as f32 / ps)
+                                    / view.height as f32,
+                            ))
                             .max(MIN_VIEW_SCALE);
                             s = s.min(s_max);
                         }
                         let win_w = (view.width as f32 * s * ps).round() as u32;
-                        let win_h = ((views::TITLE_H + view.height as f32 * s) * ps).round() as u32;
+                        let kb_h = ((views::TITLE_H + view.height as f32 * s) * ps).round() as u32;
+                        let win_h = kb_h + pane_phys;
                         if let Err(e) = platform.set_size(win_w, win_h) {
                             log::warn!("window resize failed: {e}");
                         }
@@ -926,15 +966,21 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
 }
 
 /// Whether a surface event targets the terminal pane (below the keyboard).
-fn event_in_terminal_pane(event: SurfaceEvent, keyboard_h: u32) -> bool {
+fn event_in_terminal_pane(event: SurfaceEvent, keyboard_h: u32, win_w: u32, win_h: u32) -> bool {
     use SurfaceEvent::*;
     match event {
-        PointerPressed { y, .. }
-        | PointerMoved { y, .. }
-        | PointerReleased { y, .. }
-        | TouchPressed { y, .. }
-        | TouchMoved { y, .. }
-        | TouchReleased { y, .. } => y as u32 >= keyboard_h,
+        PointerPressed { x, y, .. } | PointerMoved { x, y, .. } | PointerReleased { x, y, .. } => {
+            // The bottom-right RESIZE_CORNER square is the window-resize
+            // gesture zone: a press there must reach the gesture layer even
+            // though it sits inside the pane band (terminal mode). Mirrors
+            // the gesture's own hit-test exactly.
+            let in_resize_corner = x >= (f64::from(win_w) - RESIZE_CORNER).max(0.0)
+                && y >= (f64::from(win_h) - RESIZE_CORNER).max(0.0);
+            !in_resize_corner && (y as u32) >= keyboard_h
+        }
+        TouchPressed { y, .. } | TouchMoved { y, .. } | TouchReleased { y, .. } => {
+            (y as u32) >= keyboard_h
+        }
         PointerLeft | TouchCancelled | Resized { .. } | CloseRequested => false,
     }
 }
@@ -1061,12 +1107,21 @@ fn looks_like_xkb_spec(spec: &str) -> bool {
 /// Compute the uniform keyboard scale + horizontal offset from the current
 /// window size: the keyboard (`view.width × view.height`) must fit below the
 /// fixed 22px title strip, centered horizontally. Returns (scale, offset_x)
-/// in logical px.
-fn view_transform(win_w: u32, win_h: u32, ps: f32, view: &views::KeyboardView) -> (f32, f32) {
+/// in logical px. `pane_phys` is the terminal pane's physical height (0
+/// outside terminal mode): the pane is window space that must NOT count
+/// toward the keyboard's height budget.
+fn view_transform(
+    win_w: u32,
+    win_h: u32,
+    ps: f32,
+    view: &views::KeyboardView,
+    pane_phys: u32,
+) -> (f32, f32) {
     let wl = win_w as f32 / ps;
     let hl = win_h as f32 / ps;
+    let kb_budget = hl - views::TITLE_H - pane_phys as f32 / ps;
     let s = (wl / view.width as f32)
-        .min((hl - views::TITLE_H) / view.height as f32)
+        .min(kb_budget / view.height as f32)
         .clamp(MIN_VIEW_SCALE, MAX_VIEW_SCALE);
     let ox = ((wl - view.width as f32 * s) / 2.0).max(0.0);
     (s, ox)
@@ -1080,10 +1135,11 @@ fn apply_view_transform(
     platform: &FerrokeyPlatform,
     bridge: &mut pointer::PointerBridge,
     view: &'static views::KeyboardView,
+    pane_phys: u32,
 ) -> f32 {
     let size = platform.size();
     let ps = platform.scale().max(0.25);
-    let (s, ox) = view_transform(size.width, size.height, ps, view);
+    let (s, ox) = view_transform(size.width, size.height, ps, view, pane_phys);
     ui.set_keyboard_x(ox);
     ui.set_keyboard_width(view.width as f32 * s);
     ui.set_keyboard_height(view.height as f32 * s);
@@ -1217,7 +1273,8 @@ fn set_keyboard_view(ui: &MainWindow, layout: &ferrokey_core::Layout, view: &vie
 /// row (WS5). Presentation-only (§5.10): the keys/sequences change, nothing
 /// else does — no held keys are released, no keys pressed, no modes, no
 /// resize, no child restart. The bridge is given the same row so its chord
-/// lookup matches the rendered buttons.
+/// lookup matches the rendered buttons. The brand mark stays at the row's
+/// end through every swap (decorative; the bridge ignores it).
 fn set_terminal_shortcut_row(
     ui: &MainWindow,
     view: &views::KeyboardView,
@@ -1227,13 +1284,17 @@ fn set_terminal_shortcut_row(
     if view.id != "terminal" {
         return;
     }
-    let keys: Vec<KeyData> = match row {
+    let mut keys: Vec<KeyData> = match row {
         Some(row) => row
             .iter()
             .map(|k| KeyData {
                 name: k.label.into(),
                 label: k.label.into(),
-                width: 1.25,
+                // The rendered width is the SAME value the pointer bridge
+                // uses to hit-test the shell row (shell.rs — the per-key
+                // `width`, defaulting to SHELL_KEY_WIDTH) — a mismatch would
+                // make clicks land on the wrong chord.
+                width: k.width,
                 is_logo: false,
             })
             .collect(),
@@ -1244,15 +1305,38 @@ fn set_terminal_shortcut_row(
             .map(|row| {
                 row.keys
                     .iter()
-                    .map(|vk| KeyData {
-                        name: vk.name.into(),
-                        label: vk.name.into(),
-                        width: vk.width,
-                        is_logo: false,
+                    .map(|vk| {
+                        if vk.logo {
+                            KeyData {
+                                name: vk.name.into(),
+                                label: "".into(),
+                                width: vk.width,
+                                is_logo: true,
+                            }
+                        } else {
+                            KeyData {
+                                name: vk.name.into(),
+                                label: vk.name.into(),
+                                width: vk.width,
+                                is_logo: false,
+                            }
+                        }
                     })
                     .collect()
             })
             .unwrap_or_default(),
     };
+    // The brand mark persists across shell-row swaps (presentation-only).
+    // Only shell rows need it appended: the static fallback row above already
+    // ends with its own logo key (views.rs), so appending again would render
+    // two brand marks.
+    if row.is_some() {
+        keys.push(KeyData {
+            name: "logo".into(),
+            label: "".into(),
+            width: 0.9,
+            is_logo: true,
+        });
+    }
     ui.set_row1(ModelRc::from(Rc::new(VecModel::from(keys))));
 }
