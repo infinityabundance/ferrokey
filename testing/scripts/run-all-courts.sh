@@ -57,7 +57,8 @@ echo "── PURGING VM STATE SCRATCH ──"
 echo
 echo "── DROPPING LEGACY COURT CACHES ──"
 for v in ferrokey-cargo-cache ferrokey-target-cache ferrokey-clean-cargo \
-         ferrokey-clean-target ferrokey-payload-target ferrokey-payload-targets; do
+         ferrokey-clean-target ferrokey-payload-target ferrokey-payload-targets \
+         ferrokey-payload-target-mut ferrokey-payload-targets-mut; do
     drop_volume "$v"
 done
 
@@ -69,10 +70,11 @@ bash scripts/build-images.sh
 # The docker image build-cache (several GB on a fresh build) is only needed
 # by `docker build`; the per-court payload builds are `docker run` and do
 # not touch it. Prune it so the tmpfs-backed data-root keeps headroom for
-# the VM overlays (the wayland profile grows a ~6G overlay).
+# the VM overlays (the wayland profile grows a ~6G overlay). -a: plain
+# `prune -f` leaves cache referenced by existing image manifests.
 echo
 echo "── PRUNING DOCKER BUILD CACHE ──"
-"$DOCKER" builder prune -f >/dev/null 2>&1 || true
+"$DOCKER" builder prune -af >/dev/null 2>&1 || true
 
 echo
 echo "── BUILD + CORE UNIT COURTS (Docker) ──"
@@ -101,6 +103,10 @@ echo
  echo
  echo "── DROPPING KANI IMAGE (WS3 complete) ──"
  drop_image "$KANI_IMAGE"
+ # Hygiene: each build-images pass re-tags the oracle intermediate images;
+ # drop any now-dangling versions so the VM-court stages start from the
+ # smallest footprint.
+ "$DOCKER" image prune -f >/dev/null 2>&1 || true
 
  echo
  echo "── ADAPTIVE GEOMETRY COURT (WS4) ──"
