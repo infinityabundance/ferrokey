@@ -104,9 +104,22 @@ export component MainWindow inherits Window {
             height: 22px;
             vertical-alignment: center;
             text: "Ferrokey";
-            color: #8b949e;
+            // Ferris orange (#f74c00): the crab mascot's body color
+            // (rustacean.net, the official Rust mascot illustration).
+            color: #f74c00;
             font-size: 11px;
             font-weight: 700;
+        }
+        // The Ferris crab right after the brand name (the 🦀 emoji
+        // rasterized to assets/crab.png — the software renderer cannot draw
+        // color-emoji CBDT fonts). Vertically centered in the 22px strip.
+        Image {
+            x: 74px;
+            y: 4px;
+            width: 14px;
+            height: 14px;
+            source: @image-url("../assets/crab.png");
+            image-fit: contain;
         }
         Text {
             x: 0px;
@@ -125,6 +138,28 @@ export component MainWindow inherits Window {
             width: root.width;
             height: 1px;
             background: #2a3038;
+        }
+        // Close button ("X", top-right of the title strip) — visual only:
+        // the Rust window-gesture layer hit-tests the same region
+        // (CLOSE_BAND in src/main.rs) and quits on release. Anchored to the
+        // top-right so it follows window resizes; it sits INSIDE the strip,
+        // so the key geometry below never shifts.
+        Rectangle {
+            x: root.width - 30px;
+            y: 0px;
+            width: 30px;
+            height: 22px;
+            background: transparent;
+            Text {
+                width: 30px;
+                height: 22px;
+                text: "\u{00d7}";
+                color: #8b949e;
+                font-size: 14px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
         }
     }
 

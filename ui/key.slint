@@ -64,9 +64,12 @@ export component Key inherits Rectangle {
     width: max(root.min-key-width, key-data.width * root.base-width);
     height: root.key-height;
     border-radius: 8px;
-    background: (down || root.lit) ? #4a7fb8 : #262b33;
+    // Pressed (or logically lit) keys glow Ferris orange (#f74c00), the
+    // same orange as the Rust crab mascot; the border lightens to keep the
+    // cap's edge readable against the dark keyboard.
+    background: (down || root.lit) ? #f74c00 : #262b33;
     border-width: 1px;
-    border-color: (down || root.lit) ? #6a9fd0 : #3a4049;
+    border-color: (down || root.lit) ? #ff9d77 : #3a4049;
     drop-shadow-blur: 4px;
     drop-shadow-color: #00000066;
     drop-shadow-offset-y: 2px;

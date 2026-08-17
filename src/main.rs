@@ -96,6 +96,12 @@ enum WindowGesture {
 const MOVE_BAND: f64 = 22.0;
 /// The bottom-right corner (physical px) that resizes the window.
 const RESIZE_CORNER: f64 = 28.0;
+/// The close button region: the top-right corner of the title strip
+/// (logical px; 30 wide x the full strip height). Mirrors the "X" visual
+/// in ui/main.slint. A press here arms the close (the region is excluded
+/// from the move band, so the X never drags the window); the release fires
+/// it.
+const CLOSE_BAND: f64 = 30.0;
 
 /// The current engine time (`ferrokey-core`'s deterministic `Moment`).
 pub(crate) fn now_moment() -> ferrokey_core::Moment {
@@ -635,6 +641,12 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
     let mut current_view_scale = s0;
     // OSK visibility (the tray can show/hide it).
     let mut visible = true;
+    // Close (X button in the title strip, or the tray's Close menu item):
+    // a press in the close region arms it, the release fires it; once set,
+    // the event loop exits and the cleanup path releases held keys and
+    // shuts the terminal child down.
+    let mut close_armed = false;
+    let mut close_requested = false;
     let mut last_lit: (bool, bool, bool, bool, bool, bool, bool, bool) =
         (false, false, false, false, false, false, false, false);
     loop {
@@ -647,6 +659,10 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
                         log::warn!("tray toggle failed: {e}");
                     }
                     log::info!("OSK visibility -> {visible}");
+                }
+                tray::TrayCommand::Quit => {
+                    log::info!("tray Close requested — quitting");
+                    close_requested = true;
                 }
                 tray::TrayCommand::None => {}
             }
@@ -724,6 +740,17 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
                     // The title strip is 22 logical px tall; the gesture
                     // band must match it in PHYSICAL px.
                     let move_band = MOVE_BAND * f64::from(platform.scale());
+                    // The close button: the top-right corner of the title
+                    // strip (logical 30px wide, full strip height). Checked
+                    // BEFORE the move band so the X never starts a drag.
+                    let close_band = CLOSE_BAND * f64::from(platform.scale());
+                    let in_close =
+                        !in_resize && x >= (f64::from(gw) - close_band).max(0.0) && y <= move_band;
+                    if in_close {
+                        close_armed = true;
+                        log::debug!("close button armed at ({x:.0},{y:.0})");
+                        continue;
+                    }
                     let in_move = !in_resize && y <= move_band;
                     if in_move {
                         let (sx, sy) = platform.surface_position().unwrap_or((0, 0));
@@ -823,15 +850,29 @@ fn run(config: &UiConfig) -> anyhow::Result<()> {
                     }
                     WindowGesture::Idle => {}
                 },
-                SurfaceEvent::PointerReleased { .. } | SurfaceEvent::TouchReleased { .. }
-                    if !matches!(gesture, WindowGesture::Idle) =>
-                {
-                    gesture = WindowGesture::Idle;
-                    continue;
+                SurfaceEvent::PointerReleased { .. } | SurfaceEvent::TouchReleased { .. } => {
+                    // A release after arming the close button fires it.
+                    if close_armed {
+                        close_armed = false;
+                        close_requested = true;
+                        log::info!("close button released — quitting");
+                        continue;
+                    }
+                    if !matches!(gesture, WindowGesture::Idle) {
+                        gesture = WindowGesture::Idle;
+                        continue;
+                    }
                 }
                 _ => {}
             }
             bridge.handle_event(&ui, event);
+        }
+
+        // 1b. Close (X button / tray Close): exit the loop cleanly; the
+        //     cleanup path below releases held keys and shuts the terminal
+        //     child down.
+        if close_requested {
+            break;
         }
 
         // 2. Terminal pump: PTY output, child reap, blink, pane redraw.
